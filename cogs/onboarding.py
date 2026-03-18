@@ -5,7 +5,7 @@ import json
 import random
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import discord
 from discord.ext import commands
@@ -113,6 +113,9 @@ class ServerSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         member = interaction.user
         guild = interaction.guild
+        if guild is None or not isinstance(member, discord.Member):
+            return await interaction.response.send_message("Guild only.", ephemeral=True)
+
         chosen = guild.get_role(int(self.values[0]))
         if not chosen:
             return await interaction.response.send_message("Role missing.", ephemeral=True)
@@ -152,8 +155,11 @@ class WelcomeSetup(commands.Cog):
     @app_commands.command(name="setup_roles", description="Post all role selection messages in get-roles.")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def setup_roles(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("Guild only.", ephemeral=True)
+
         channel = interaction.guild.get_channel(GET_ROLES_CHANNEL_ID)
-        if not channel:
+        if not isinstance(channel, discord.TextChannel):
             return await interaction.response.send_message("❌ get-roles channel not found.", ephemeral=True)
 
         await interaction.response.send_message("⏳ Posting role messages…", ephemeral=True)
@@ -218,4 +224,90 @@ class WelcomeSetup(commands.Cog):
         self.config.activity_emoji_map = emoji_map
         self.config.save()
 
-    # (rest of file unchanged)
+    # ── REACTION ADD ──────────────────────────────────────────────
+    @commands.Cog.listener()
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        if payload.guild_id != GUILD_ID:
+            return
+        if self.bot.user and payload.user_id == self.bot.user.id:
+            return
+
+        guild = self.bot.get_guild(payload.guild_id)
+        member = guild.get_member(payload.user_id) if guild else None
+        if not guild or not member:
+            return
+
+        emoji = str(payload.emoji)
+
+        # Pronouns
+        if payload.message_id == self.config.pronouns_message_id:
+            pmap = self._pronoun_map()
+            if emoji in pmap:
+                role = guild.get_role(pmap[emoji])
+                if role:
+                    await member.add_roles(role)
+                return
+
+        # DM prefs (exclusive)
+        if payload.message_id == self.config.dms_message_id:
+            dmap = self._dms_map()
+            if emoji in dmap:
+                add = guild.get_role(dmap[emoji])
+                remove = guild.get_role(NO_DM_ID if dmap[emoji] == OPEN_DM_ID else OPEN_DM_ID)
+                if remove and remove in member.roles:
+                    await member.remove_roles(remove)
+                if add and add not in member.roles:
+                    await member.add_roles(add)
+                return
+
+        # Activity pings
+        if payload.message_id == self.config.activity_message_id:
+            role_id = self.config.activity_emoji_map.get(emoji)
+            if role_id:
+                role = guild.get_role(role_id)
+                if role:
+                    await member.add_roles(role)
+
+    # ── REACTION REMOVE ───────────────────────────────────────────
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
+        if payload.guild_id != GUILD_ID:
+            return
+
+        guild = self.bot.get_guild(payload.guild_id)
+        member = guild.get_member(payload.user_id) if guild else None
+        if not guild or not member:
+            return
+
+        emoji = str(payload.emoji)
+
+        # Pronouns
+        if payload.message_id == self.config.pronouns_message_id:
+            pmap = self._pronoun_map()
+            if emoji in pmap:
+                role = guild.get_role(pmap[emoji])
+                if role and role in member.roles:
+                    await member.remove_roles(role)
+                return
+
+        # DM prefs
+        if payload.message_id == self.config.dms_message_id:
+            dmap = self._dms_map()
+            if emoji in dmap:
+                role = guild.get_role(dmap[emoji])
+                if role and role in member.roles:
+                    await member.remove_roles(role)
+                return
+
+        # Activity pings
+        if payload.message_id == self.config.activity_message_id:
+            role_id = self.config.activity_emoji_map.get(emoji)
+            if role_id:
+                role = guild.get_role(role_id)
+                if role and role in member.roles:
+                    await member.remove_roles(role)
+
+
+async def setup(bot):
+    bot.add_view(ServerSelectView())
+    await bot.add_cog(WelcomeSetup(bot))
