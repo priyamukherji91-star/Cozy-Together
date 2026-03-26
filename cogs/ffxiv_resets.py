@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone, time as dtime
 
@@ -36,6 +37,41 @@ WEEKLY_RESET_WEEKDAY = 1  # Monday=0, Tuesday=1, ...
 # Optional: restrict admin commands to these roles (or admin permission)
 MAMA_CAT_ROLE_NAME = "Mama Cat"
 GHOUL_ROLE_NAME = "Ghoul"
+
+
+DAILY_LINES = [
+    "Your dailies are up. I expect results, not excuses.",
+    "Daily reset. Go collect your little chores and pretend it’s fun.",
+    "Your daily responsibilities have respawned. Tragic.",
+    "Dailies are ready. Get in there and act employed.",
+    "Time to do your dailies. I do not care if you were comfy on your sofa.",
+    "Daily reset. Please act like a functional member of Eorzea.",
+    "It's reset... take your ERP pants off and go do some content, will you? Oh and I need food.",
+    "Dailies are live. Try not to queue with clown energy.",
+    "Your dailies are waiting. I expect effort, not theatrics.",
+    "Daily reset. Go spin the roulette wheel of regret.",
+    "Your dailies are up. Stop flirting and start working.",
+    "Dailies are live. If I catch you ERPing before your roulettes are done, I’m biting.",
+    "Daily reset. If you have time to pose, you have time to queue.",
+    "Dailies are live. Stop loitering and go earn your serotonin scraps.",
+    "Daily reset. Get in there before I report you for being idle and annoying.",
+    "Daily reset. If you queue like you dress, this is going to be tragic.",
+    "Daily reset. Maybe today you’ll get something other than Syrcus Tower.",
+]
+
+WEEKLY_LINES = [
+    "Your weekly responsibilities are back. I assume you’re thrilled.",
+    "Weekly reset. Step away from the glamour plate and go do content.",
+    "Weeklies are live. I expect movement, not standing in Limsa.",
+    "Weekly reset. Get up, get moving, and bring me snacks.",
+    "A new week begins. Please try to be useful.",
+    "A new week has begun. Unfortunately, so have your chores.",
+    "Weekly reset. Time to act like you have a plan.",
+    "Your weeklies are back. I didn’t ask for this either.",
+    "Weekly reset. If you need me, I’ll be judging from a warm surface.",
+    "Weekly reset. Go do your chores before you get trapped in /gpose again.",
+    "Your weekly nonsense has refreshed. Put the catboy away and get moving.",
+]
 
 
 def _member_has_power(member: discord.Member) -> bool:
@@ -185,11 +221,13 @@ class FFXIVResets(commands.Cog):
         if self.state.last_daily_fired_utc_date == today:
             return
 
+        daily_line = random.choice(DAILY_LINES)
+
         for guild in self.bot.guilds:
             await self._post_embed(
                 guild,
                 title="☀️ Daily Reset (FFXIV)",
-                body="Dailies have just reset. Go do them before I push something off the table again.",
+                body=daily_line,
             )
 
         self.state.last_daily_fired_utc_date = today
@@ -211,11 +249,13 @@ class FFXIVResets(commands.Cog):
         if self.state.last_weekly_fired_utc_date == today:
             return
 
+        weekly_line = random.choice(WEEKLY_LINES)
+
         for guild in self.bot.guilds:
             await self._post_embed(
                 guild,
                 title="🗓️ Weekly Reset (FFXIV)",
-                body="Weekly reset. New week, same expectations. Fail them quietly.",
+                body=weekly_line,
             )
 
         self.state.last_weekly_fired_utc_date = today
