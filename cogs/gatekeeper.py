@@ -4,7 +4,7 @@ Gatekeeper Cog — Landing Zone ✅ -> role grant
 
 • /setup_gate — posts (or re-posts) the landing-zone message and seeds ✅
 • on_raw_reaction_add — when a user reacts ✅ in landing-zone:
-      -> add Cozy Gremlins
+      -> add member role
       -> remove Fresh Meat
 """
 
@@ -28,7 +28,7 @@ ACCEPT_EMOJIS = {"✅", "☑️", "✔️"}
 GATE_TITLE = "Welcome to Cozy Together"
 GATE_TEXT = (
     "Read **da-rulez** and then react with ✅ here to enter.\n\n"
-    "**You’ll be granted _Cozy Gremlins_ and _Fresh Meat_ will be removed.**\n"
+    "**You’ll be granted the member role and _Fresh Meat_ will be removed.**\n"
     "If you change your mind later, ask a mod."
 )
 

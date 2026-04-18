@@ -30,7 +30,8 @@ from discord import app_commands
 # ──────────────────────────────────────────────────────────────
 MAMA_CAT_ROLE_NAME = "Mama Cat"
 GHOUL_ROLE_NAME    = "Ghoul"
-BLOCKED_ROLE_NAMES = {"Fresh Meat", "Cozy Gremlins"}
+BLOCKED_ROLE_NAMES = {"Fresh Meat"}
+COZY_GREMLINS_ROLE_ID = 1425978340304621769
 
 TIMEOUT_LINES = [
     "Mittens has placed {user} in the corner for {duration}. Think about your life choices.",
@@ -55,7 +56,10 @@ def has_mittens_power(member: discord.Member) -> bool:
     return any(n in names for n in (MAMA_CAT_ROLE_NAME, GHOUL_ROLE_NAME))
 
 def is_blocked(member: discord.Member) -> bool:
-    return any(n in _names(member) for n in BLOCKED_ROLE_NAMES)
+    return (
+        any(n in _names(member) for n in BLOCKED_ROLE_NAMES)
+        or any(r.id == COZY_GREMLINS_ROLE_ID for r in member.roles)
+    )
 
 _DURATION_RE = re.compile(r"^(\d+)([smhd]?)$", re.I)
 
