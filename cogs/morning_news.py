@@ -586,7 +586,7 @@ class MorningNews(commands.Cog):
                 self.client.chat.completions.create,
                 model=OPENAI_MODEL,
                 temperature=1.0,
-                max_tokens=900,
+                max_completion_tokens=900,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
