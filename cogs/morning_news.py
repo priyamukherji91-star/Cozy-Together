@@ -25,7 +25,7 @@ TIMEZONE = ZoneInfo("Europe/Brussels")
 POST_HOUR = 8
 POST_MINUTE = 0
 
-LIVE_POST_CHANNEL_ID = 1425974792745648252
+LIVE_POST_CHANNEL_ID = 1494993533470507048
 TEST_POST_CHANNEL_ID = 1426295618934149212
 
 SOURCE_CHANNEL_IDS = [
@@ -53,6 +53,7 @@ POST_WINDOW_MINUTES = 10
 IGNORED_PREFIXES = ("!", "/", ".")
 MAX_LINE_LENGTH = 260
 MAX_TRANSCRIPT_LINES = 180
+MAX_EMBED_BODY_LENGTH = 3500
 
 MENTION_RE = re.compile(r"<@!?(?P<id>\d+)>")
 ROLE_MENTION_RE = re.compile(r"<@&(?P<id>\d+)>")
@@ -433,6 +434,33 @@ class MorningNews(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"Test failed: `{e}`", ephemeral=True)
 
+    @app_commands.command(
+        name="repost_morning_news",
+        description="Post Mitten's Morning News to the live morning news channel."
+    )
+    async def repost_morning_news(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("Guild only.", ephemeral=True)
+            return
+
+        if not has_test_role(interaction.user):
+            await interaction.response.send_message("You don’t have paws for that.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        channel = interaction.guild.get_channel(LIVE_POST_CHANNEL_ID)
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.followup.send("Live post channel not found.", ephemeral=True)
+            return
+
+        try:
+            embed = await self.build_news_embed(for_test=False)
+            await channel.send(embed=embed)
+            await interaction.followup.send("Repost sent. 🐾", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"Repost failed: `{e}`", ephemeral=True)
+
     async def build_news_embed(self, for_test: bool) -> discord.Embed:
         now = local_now()
         end_time = now.replace(second=0, microsecond=0)
@@ -453,7 +481,7 @@ class MorningNews(commands.Cog):
         title_date = now.strftime("%B %d, %Y")
         embed = discord.Embed(
             title=f"Mitten's Morning News — {title_date}",
-            description=split_embed_description(body),
+            description=split_embed_description(body, limit=MAX_EMBED_BODY_LENGTH),
             color=discord.Color.random(),
         )
         return embed
@@ -526,24 +554,29 @@ class MorningNews(commands.Cog):
             "Do not sound like a newspaper. "
             "Do not use bullet points. "
             "Do not use real Discord mentions or @ symbols before names. "
-            "When referring to someone, use their plain display name only, and bold the person's name when introducing their section. "
-            "Write the recap as a series of short readable mini-sections, each with a bold funny title and then 1-3 sentences summarizing what that person or small cluster contributed. "
+            "When referring to someone, use their plain display name only. "
+            "Write the recap as a series of short readable mini-sections, each with a bold funny title and then 1-2 sentences summarizing what that person or small cluster contributed. "
             "Keep quoting to a minimum. "
             "Prefer summary over raw transcript repetition. "
-            "Keep it varied, readable, and entertaining."
+            "Keep it varied, readable, entertaining, and compact. "
+            "Do not ramble. "
+            "Aim for roughly 6 to 9 sections total. "
+            "Keep the full recap comfortably under 3500 characters."
         )
 
         user_prompt = (
-            "Turn this cleaned public transcript into a long but readable daily recap.\n\n"
+            "Turn this cleaned public transcript into a readable daily recap.\n\n"
             "Formatting rules:\n"
             "- Each item should look like a little funny headline followed by a short summary.\n"
             "- Headline must be bold.\n"
-            "- Person name should be bold too when introduced.\n"
             "- No @ before names.\n"
             "- Keep quotes rare.\n"
             "- Make the recap easy to read in Discord.\n"
             "- Do not mention channels.\n"
-            "- Keep people weighted fairly evenly.\n\n"
+            "- Keep people weighted fairly evenly.\n"
+            "- Keep sections punchy, not long.\n"
+            "- Prefer fewer stronger sections over many long ones.\n"
+            "- Keep the total output under 3500 characters.\n\n"
             "Transcript:\n"
             f"{transcript}"
         )
@@ -553,6 +586,7 @@ class MorningNews(commands.Cog):
                 self.client.chat.completions.create,
                 model=OPENAI_MODEL,
                 temperature=1.0,
+                max_tokens=900,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
