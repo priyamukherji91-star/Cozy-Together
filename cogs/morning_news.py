@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import random
@@ -616,43 +617,92 @@ class MorningNews(commands.Cog):
     async def generate_menace_caption(self, message: discord.Message) -> str:
         fallback = clamp_text(random.choice(FALLBACK_MENACE_LINES), MAX_MENACE_CAPTION_LENGTH)
 
-        if not self.client:
+        if not self.client or not message.guild:
+            return fallback
+
+        image_attachment = None
+        for attachment in message.attachments:
+            content_type = (attachment.content_type or "").lower()
+            suffix = Path(attachment.filename).suffix.lower()
+            if content_type.startswith("image/") or suffix in VALID_IMAGE_EXTENSIONS:
+                image_attachment = attachment
+                break
+
+        if not image_attachment:
             return fallback
 
         author_name = discord.utils.escape_markdown(message.author.display_name, as_needed=True)
         raw_content = normalize_space(message.content or "")
-        cleaned_content = clamp_text(replace_mentions(clean_custom_emoji(raw_content), message.guild), 180) if raw_content else ""
-
-        content_bits = []
-        if cleaned_content:
-            content_bits.append(f"Caption/message text from the post: {cleaned_content}")
-        content_bits.append(f"Posted by: {author_name}")
-        content_bits.append("This is for a cat or pet photo posted in a Discord pet channel.")
-
-        system_prompt = (
-            "You are Mittens the Menace writing a tiny 'Menace of the Day' caption for a pet photo in a Discord server. "
-            "Write in English only. "
-            "Tone: mean, judgmental, dryly sarcastic, unhinged little menace, but funny rather than cruel. "
-            "Assume the photo is adorable but suspicious. "
-            "Do not target gender, sexuality, race, ethnicity, religion, disability, or identity. "
-            "Do not use bullet points. "
-            "Do not use real Discord mentions or @ symbols before names. "
-            "Do not mention channel names. "
-            "Write exactly one short caption, ideally 1 sentence, max 2 short sentences. "
-            "Keep it compact, punchy, and under 220 characters."
-        )
-
-        user_prompt = "Write a short Menace of the Day caption for this pet photo.\n\n" + "\n".join(content_bits)
+        cleaned_content = clamp_text(
+            replace_mentions(clean_custom_emoji(raw_content), message.guild),
+            180,
+        ) if raw_content else ""
 
         try:
+            image_bytes = await image_attachment.read()
+
+            content_type = (image_attachment.content_type or "").lower()
+            if not content_type.startswith("image/"):
+                suffix = Path(image_attachment.filename).suffix.lower()
+                if suffix == ".png":
+                    content_type = "image/png"
+                elif suffix == ".webp":
+                    content_type = "image/webp"
+                elif suffix == ".gif":
+                    content_type = "image/gif"
+                else:
+                    content_type = "image/jpeg"
+
+            image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+            data_url = f"data:{content_type};base64,{image_b64}"
+
+            text_prompt = (
+                "Write a short 'Menace of the Day' caption based primarily on what is visibly happening in this pet photo. "
+                "This is for a Discord server.\n\n"
+                f"Posted by: {author_name}\n"
+            )
+
+            if cleaned_content:
+                text_prompt += f"Text included with the post: {cleaned_content}\n"
+
+            text_prompt += (
+                "\nRules:\n"
+                "- English only.\n"
+                "- Mean, judgmental, dryly sarcastic, unhinged little menace, but funny rather than cruel.\n"
+                "- Focus on the pet's expression, pose, vibe, or visible chaos.\n"
+                "- You may lightly use the poster context if it helps.\n"
+                "- Do not use bullet points.\n"
+                "- Do not use real Discord mentions or @ symbols.\n"
+                "- Do not mention channel names.\n"
+                "- Exactly one short caption, ideally 1 sentence, max 2 short sentences.\n"
+                "- Under 220 characters.\n"
+            )
+
             completion = await asyncio.to_thread(
                 self.client.chat.completions.create,
                 model=OPENAI_MODEL,
                 temperature=1.0,
                 max_completion_tokens=120,
                 messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are Mittens the Menace writing a tiny 'Menace of the Day' caption for a pet photo "
+                            "in a Discord server. Funny, suspicious, compact, and rude in a playful way."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": text_prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": data_url,
+                                },
+                            },
+                        ],
+                    },
                 ],
             )
             text = (completion.choices[0].message.content or "").strip()
