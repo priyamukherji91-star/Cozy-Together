@@ -27,6 +27,7 @@ POST_MINUTE = 0
 
 LIVE_POST_CHANNEL_ID = 1494993533470507048
 TEST_POST_CHANNEL_ID = 1426295618934149212
+PET_CHANNEL_ID = 1427657614061207724
 
 SOURCE_CHANNEL_IDS = [
     1425974792745648252,
@@ -54,6 +55,8 @@ IGNORED_PREFIXES = ("!", "/", ".")
 MAX_LINE_LENGTH = 260
 MAX_TRANSCRIPT_LINES = 180
 MAX_EMBED_BODY_LENGTH = 3500
+MAX_MENACE_CAPTION_LENGTH = 240
+VALID_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 MENTION_RE = re.compile(r"<@!?(?P<id>\d+)>")
 ROLE_MENTION_RE = re.compile(r"<@&(?P<id>\d+)>")
@@ -106,6 +109,15 @@ SUMMARY_FILLERS = [
     "The public record continues to be a mistake.",
     "I regret to inform you that people kept talking.",
 ]
+
+FALLBACK_MENACE_LINES = [
+    "A tiny criminal presented without remorse.",
+    "Seen here avoiding accountability with professional grace.",
+    "An innocent face attached to highly suspicious intentions.",
+    "Public nuisance. Soft paws. No regrets.",
+    "Clearly responsible for something and unwilling to discuss it.",
+]
+
 
 # ──────────────────────────────────────────────────────────────
 # STATE
@@ -352,6 +364,26 @@ def build_fallback_news(grouped: dict[str, list[str]], total_messages: int) -> s
     return "\n\n".join(sections)
 
 
+def message_has_image_attachment(message: discord.Message) -> bool:
+    for attachment in message.attachments:
+        content_type = (attachment.content_type or "").lower()
+        if content_type.startswith("image/"):
+            return True
+        suffix = Path(attachment.filename).suffix.lower()
+        if suffix in VALID_IMAGE_EXTENSIONS:
+            return True
+    return False
+
+
+def get_first_image_url(message: discord.Message) -> str | None:
+    for attachment in message.attachments:
+        content_type = (attachment.content_type or "").lower()
+        suffix = Path(attachment.filename).suffix.lower()
+        if content_type.startswith("image/") or suffix in VALID_IMAGE_EXTENSIONS:
+            return attachment.url
+    return None
+
+
 # ──────────────────────────────────────────────────────────────
 # COG
 # ──────────────────────────────────────────────────────────────
@@ -478,12 +510,31 @@ class MorningNews(commands.Cog):
             for_test=for_test,
         )
 
+        menace_message = await self.pick_random_pet_message(
+            start_time=start_time,
+            end_time=end_time,
+        )
+
         title_date = now.strftime("%B %d, %Y")
         embed = discord.Embed(
             title=f"Mitten's Morning News — {title_date}",
             description=split_embed_description(body, limit=MAX_EMBED_BODY_LENGTH),
             color=discord.Color.random(),
         )
+
+        if menace_message:
+            image_url = get_first_image_url(menace_message)
+            if image_url:
+                embed.set_image(url=image_url)
+
+            caption = await self.generate_menace_caption(menace_message)
+            menace_name = discord.utils.escape_markdown(menace_message.author.display_name, as_needed=True)
+            embed.add_field(
+                name="Menace of the Day",
+                value=f"{caption}\n— {menace_name}",
+                inline=False,
+            )
+
         return embed
 
     async def collect_transcript_data(
@@ -529,6 +580,88 @@ class MorningNews(commands.Cog):
 
         lines = choose_relevant_lines(lines, MAX_TRANSCRIPT_LINES)
         return lines, dict(grouped), len(collected)
+
+    async def pick_random_pet_message(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> discord.Message | None:
+        channel = self.bot.get_channel(PET_CHANNEL_ID)
+        if not isinstance(channel, discord.TextChannel):
+            return None
+
+        candidates: list[discord.Message] = []
+
+        try:
+            async for msg in channel.history(limit=None, after=start_time, oldest_first=True):
+                if msg.created_at.replace(tzinfo=msg.created_at.tzinfo or TIMEZONE) > end_time:
+                    continue
+                if msg.author.bot:
+                    continue
+                if not msg.attachments:
+                    continue
+                if not message_has_image_attachment(msg):
+                    continue
+                candidates.append(msg)
+        except discord.Forbidden:
+            return None
+        except Exception:
+            return None
+
+        if not candidates:
+            return None
+
+        return random.choice(candidates)
+
+    async def generate_menace_caption(self, message: discord.Message) -> str:
+        fallback = clamp_text(random.choice(FALLBACK_MENACE_LINES), MAX_MENACE_CAPTION_LENGTH)
+
+        if not self.client:
+            return fallback
+
+        author_name = discord.utils.escape_markdown(message.author.display_name, as_needed=True)
+        raw_content = normalize_space(message.content or "")
+        cleaned_content = clamp_text(replace_mentions(clean_custom_emoji(raw_content), message.guild), 180) if raw_content else ""
+
+        content_bits = []
+        if cleaned_content:
+            content_bits.append(f"Caption/message text from the post: {cleaned_content}")
+        content_bits.append(f"Posted by: {author_name}")
+        content_bits.append("This is for a cat or pet photo posted in a Discord pet channel.")
+
+        system_prompt = (
+            "You are Mittens the Menace writing a tiny 'Menace of the Day' caption for a pet photo in a Discord server. "
+            "Write in English only. "
+            "Tone: mean, judgmental, dryly sarcastic, unhinged little menace, but funny rather than cruel. "
+            "Assume the photo is adorable but suspicious. "
+            "Do not target gender, sexuality, race, ethnicity, religion, disability, or identity. "
+            "Do not use bullet points. "
+            "Do not use real Discord mentions or @ symbols before names. "
+            "Do not mention channel names. "
+            "Write exactly one short caption, ideally 1 sentence, max 2 short sentences. "
+            "Keep it compact, punchy, and under 220 characters."
+        )
+
+        user_prompt = "Write a short Menace of the Day caption for this pet photo.\n\n" + "\n".join(content_bits)
+
+        try:
+            completion = await asyncio.to_thread(
+                self.client.chat.completions.create,
+                model=OPENAI_MODEL,
+                temperature=1.0,
+                max_completion_tokens=120,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+            text = (completion.choices[0].message.content or "").strip()
+            if text:
+                return clamp_text(text, MAX_MENACE_CAPTION_LENGTH)
+        except Exception as e:
+            print(f"[MorningNews] Menace caption generation failed, using fallback: {e}")
+
+        return fallback
 
     async def generate_news_text(
         self,
