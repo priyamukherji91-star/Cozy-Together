@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import os
 import random
@@ -28,7 +27,6 @@ POST_MINUTE = 0
 
 LIVE_POST_CHANNEL_ID = 1494993533470507048
 TEST_POST_CHANNEL_ID = 1426295618934149212
-PET_CHANNEL_ID = 1427657614061207724
 
 SOURCE_CHANNEL_IDS = [
     1425974792745648252,
@@ -56,8 +54,7 @@ IGNORED_PREFIXES = ("!", "/", ".")
 MAX_LINE_LENGTH = 260
 MAX_TRANSCRIPT_LINES = 180
 MAX_EMBED_BODY_LENGTH = 3500
-MAX_MENACE_CAPTION_LENGTH = 240
-VALID_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+MAX_SECTION_TITLE_LENGTH = 48
 
 MENTION_RE = re.compile(r"<@!?(?P<id>\d+)>")
 ROLE_MENTION_RE = re.compile(r"<@&(?P<id>\d+)>")
@@ -68,6 +65,11 @@ MULTISPACE_RE = re.compile(r"\s+")
 BAD_CONTROL_RE = re.compile(r"[\x00-\x08\x0B-\x1F\x7F]")
 EMOJI_ONLY_RE = re.compile(r"^\s*(?:<a?:\w+:\d+>|[\U00010000-\U0010ffff\u2600-\u27bf\u2300-\u23ff\s])+\s*$")
 WORD_RE = re.compile(r"[A-Za-z0-9']+")
+CATEGORY_LINE_RE = re.compile(r"^\s*【[^\n】]{2,60}】\s*$")
+INLINE_CATEGORY_RE = re.compile(r"(?m)^\s*【[^\n】]{2,60}】\s*(?=\*\*)")
+BOLD_TITLE_RE = re.compile(r"^\s*\*\*[^\n]+\*\*\s*$")
+DIVIDER = "━━━━━━━━━━━━"
+MENACE_TITLE = "**Menace of the Day**"
 
 STOPWORDS = {
     "the", "and", "for", "with", "that", "this", "have", "from", "your", "you",
@@ -110,15 +112,6 @@ SUMMARY_FILLERS = [
     "The public record continues to be a mistake.",
     "I regret to inform you that people kept talking.",
 ]
-
-FALLBACK_MENACE_LINES = [
-    "A tiny criminal presented without remorse.",
-    "Seen here avoiding accountability with professional grace.",
-    "An innocent face attached to highly suspicious intentions.",
-    "Public nuisance. Soft paws. No regrets.",
-    "Clearly responsible for something and unwilling to discuss it.",
-]
-
 
 # ──────────────────────────────────────────────────────────────
 # STATE
@@ -254,6 +247,41 @@ def split_embed_description(text: str, limit: int = 4096) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
+def split_embed_description_preserving_menace(text: str, limit: int = 4096) -> str:
+    """
+    Trim the embed description while reserving room for Menace of the Day.
+
+    Current Mittens news may not always include a Menace block, but when it does,
+    this prevents the final pet section from getting swallowed by the normal body
+    trim. This only changes text trimming behaviour; it does not add or select
+    any images.
+    """
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+
+    marker = MENACE_TITLE
+    menace_index = text.find(marker)
+    if menace_index == -1:
+        return split_embed_description(text, limit=limit)
+
+    main_body = text[:menace_index].strip()
+    menace_body = text[menace_index:].strip()
+
+    reserved = len(menace_body) + len(f"\n\n{DIVIDER}\n")
+    available_for_main = max(0, limit - reserved - 1)
+
+    if available_for_main <= 0:
+        return split_embed_description(menace_body, limit=limit)
+
+    trimmed_main = split_embed_description(main_body, limit=available_for_main).strip()
+    if not trimmed_main:
+        return split_embed_description(menace_body, limit=limit)
+
+    combined = f"{trimmed_main}\n\n{DIVIDER}\n{menace_body}"
+    return split_embed_description(combined, limit=limit)
+
+
 def extract_keywords(messages: list[str], limit: int = 3) -> list[str]:
     counts: dict[str, int] = defaultdict(int)
 
@@ -332,11 +360,124 @@ def summarize_person(messages: list[str]) -> str:
     return first + second + closer
 
 
+def strip_category_labels(text: str) -> str:
+    text = INLINE_CATEGORY_RE.sub("", text)
+    lines = [line for line in text.splitlines() if not CATEGORY_LINE_RE.match(line.strip())]
+    return "\n".join(lines).strip()
+
+
+def normalize_menace_block(text: str) -> str:
+    # Converts any tagged Menace heading into the requested plain bold heading.
+    text = re.sub(
+        r"(?ims)^\s*【[^\n】]*MENACE[^\n】]*】\s*\n\s*\*\*Menace of the Day\*\*",
+        MENACE_TITLE,
+        text,
+    )
+    text = re.sub(
+        r"(?ims)^\s*【[^\n】]*MENACE[^\n】]*】\s*\*\*Menace of the Day\*\*",
+        MENACE_TITLE,
+        text,
+    )
+    return text
+
+
+def remove_existing_dividers(text: str) -> str:
+    return "\n".join(line for line in text.splitlines() if line.strip() != DIVIDER).strip()
+
+
+def split_sections_by_bold_titles(text: str) -> list[str]:
+    lines = text.splitlines()
+    sections: list[list[str]] = []
+    current: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if BOLD_TITLE_RE.match(stripped) and current:
+            if any(part.strip() for part in current):
+                sections.append(current)
+            current = [stripped]
+        else:
+            current.append(line.rstrip())
+
+    if any(part.strip() for part in current):
+        sections.append(current)
+
+    return ["\n".join(section).strip() for section in sections if "\n".join(section).strip()]
+
+
+def shorten_section_title(title: str, max_len: int = MAX_SECTION_TITLE_LENGTH) -> str:
+    title = normalize_space(title.strip().strip("*"))
+    if len(title) <= max_len:
+        return title
+
+    cut = title[: max_len - 1].rstrip()
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0].rstrip()
+    return (cut or title[: max_len - 1].rstrip()) + "…"
+
+
+def normalize_bold_title_line(line: str) -> str:
+    title = line.strip()
+    if title.startswith("**") and title.endswith("**"):
+        title = title[2:-2]
+    return f"**{shorten_section_title(title)}**"
+
+
+def normalize_section_spacing(section: str) -> str:
+    lines = [line.rstrip() for line in section.splitlines()]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    if not lines:
+        return ""
+
+    first = lines[0].strip()
+    if BOLD_TITLE_RE.match(first):
+        first = normalize_bold_title_line(first)
+        body = "\n".join(lines[1:]).strip()
+        if body:
+            return f"{first}\n\n{body}"
+        return first
+
+    return "\n".join(lines).strip()
+
+
+def add_section_dividers(text: str) -> str:
+    text = remove_existing_dividers(text)
+    if not text:
+        return text
+
+    sections = split_sections_by_bold_titles(text)
+    if len(sections) <= 1:
+        return normalize_section_spacing(text)
+
+    normalized = [normalize_section_spacing(section) for section in sections]
+    normalized = [section for section in normalized if section]
+    return f"\n\n{DIVIDER}\n".join(normalized)
+
+
+def normalize_news_format(text: str) -> str:
+    text = text.strip()
+    text = normalize_menace_block(text)
+    text = strip_category_labels(text)
+    text = add_section_dividers(text)
+    text = re.sub(r"\n{4,}", "\n\n", text).strip()
+    return text
+
+
+def format_section(title: str, body: str) -> str:
+    return f"**{shorten_section_title(title)}**\n\n{body.strip()}"
+
+
 def build_fallback_news(grouped: dict[str, list[str]], total_messages: int) -> str:
     if not grouped:
-        return (
-            f"{random.choice(QUIET_OPENERS)} There was very little to report beyond the usual low-level lurking and the vague sense that several of you were one bad decision away from making my morning easier. "
-            "Even so, the silence itself felt suspicious. I will be monitoring that."
+        return normalize_news_format(
+            format_section(
+                "Public Nuisance Update",
+                f"{random.choice(QUIET_OPENERS)} There was very little to report beyond the usual low-level lurking and the vague sense that several of you were one bad decision away from making my morning easier. Even so, the silence itself felt suspicious. I will be monitoring that."
+            )
         )
 
     ordered = sorted(grouped.items(), key=lambda kv: (-len(kv[1]), kv[0].lower()))
@@ -348,41 +489,23 @@ def build_fallback_news(grouped: dict[str, list[str]], total_messages: int) -> s
         else f"Another full day of public activity has been dragged into the light, and unfortunately many of you were far too comfortable speaking in front of witnesses. {total_messages} usable messages were collected, which was more than enough to confirm that standards remain missing."
     )
 
-    sections = [intro]
+    sections = [format_section("Daily Damage Report", intro)]
 
     for name, msgs in chosen:
         title = make_funny_title(name, msgs)
         summary = summarize_person(msgs)
-        sections.append(f"**{title} — {name}**\n{summary}")
+        sections.append(format_section(f"{title} — {name}", summary))
 
     if len(grouped) > len(chosen):
         leftovers = len(grouped) - len(chosen)
         sections.append(
-            f"**Additional Civilian Activity**\n"
-            f"{leftovers} other people also left enough traces to remind me that peace remains a temporary condition."
+            format_section(
+                "Additional Civilian Activity",
+                f"{leftovers} other people also left enough traces to remind me that peace remains a temporary condition."
+            )
         )
 
-    return "\n\n".join(sections)
-
-
-def message_has_image_attachment(message: discord.Message) -> bool:
-    for attachment in message.attachments:
-        content_type = (attachment.content_type or "").lower()
-        if content_type.startswith("image/"):
-            return True
-        suffix = Path(attachment.filename).suffix.lower()
-        if suffix in VALID_IMAGE_EXTENSIONS:
-            return True
-    return False
-
-
-def get_first_image_url(message: discord.Message) -> str | None:
-    for attachment in message.attachments:
-        content_type = (attachment.content_type or "").lower()
-        suffix = Path(attachment.filename).suffix.lower()
-        if content_type.startswith("image/") or suffix in VALID_IMAGE_EXTENSIONS:
-            return attachment.url
-    return None
+    return normalize_news_format("\n\n".join(sections))
 
 
 # ──────────────────────────────────────────────────────────────
@@ -511,31 +634,12 @@ class MorningNews(commands.Cog):
             for_test=for_test,
         )
 
-        menace_message = await self.pick_random_pet_message(
-            start_time=start_time,
-            end_time=end_time,
-        )
-
         title_date = now.strftime("%B %d, %Y")
         embed = discord.Embed(
             title=f"Mitten's Morning News — {title_date}",
-            description=split_embed_description(body, limit=MAX_EMBED_BODY_LENGTH),
+            description=split_embed_description_preserving_menace(body, limit=MAX_EMBED_BODY_LENGTH),
             color=discord.Color.random(),
         )
-
-        if menace_message:
-            image_url = get_first_image_url(menace_message)
-            if image_url:
-                embed.set_image(url=image_url)
-
-            caption = await self.generate_menace_caption(menace_message)
-            menace_name = discord.utils.escape_markdown(menace_message.author.display_name, as_needed=True)
-            embed.add_field(
-                name="Menace of the Day",
-                value=f"{caption}\n— {menace_name}",
-                inline=False,
-            )
-
         return embed
 
     async def collect_transcript_data(
@@ -582,137 +686,6 @@ class MorningNews(commands.Cog):
         lines = choose_relevant_lines(lines, MAX_TRANSCRIPT_LINES)
         return lines, dict(grouped), len(collected)
 
-    async def pick_random_pet_message(
-        self,
-        start_time: datetime,
-        end_time: datetime,
-    ) -> discord.Message | None:
-        channel = self.bot.get_channel(PET_CHANNEL_ID)
-        if not isinstance(channel, discord.TextChannel):
-            return None
-
-        candidates: list[discord.Message] = []
-
-        try:
-            async for msg in channel.history(limit=None, after=start_time, oldest_first=True):
-                if msg.created_at.replace(tzinfo=msg.created_at.tzinfo or TIMEZONE) > end_time:
-                    continue
-                if msg.author.bot:
-                    continue
-                if not msg.attachments:
-                    continue
-                if not message_has_image_attachment(msg):
-                    continue
-                candidates.append(msg)
-        except discord.Forbidden:
-            return None
-        except Exception:
-            return None
-
-        if not candidates:
-            return None
-
-        return random.choice(candidates)
-
-    async def generate_menace_caption(self, message: discord.Message) -> str:
-        fallback = clamp_text(random.choice(FALLBACK_MENACE_LINES), MAX_MENACE_CAPTION_LENGTH)
-
-        if not self.client or not message.guild:
-            return fallback
-
-        image_attachment = None
-        for attachment in message.attachments:
-            content_type = (attachment.content_type or "").lower()
-            suffix = Path(attachment.filename).suffix.lower()
-            if content_type.startswith("image/") or suffix in VALID_IMAGE_EXTENSIONS:
-                image_attachment = attachment
-                break
-
-        if not image_attachment:
-            return fallback
-
-        author_name = discord.utils.escape_markdown(message.author.display_name, as_needed=True)
-        raw_content = normalize_space(message.content or "")
-        cleaned_content = clamp_text(
-            replace_mentions(clean_custom_emoji(raw_content), message.guild),
-            180,
-        ) if raw_content else ""
-
-        try:
-            image_bytes = await image_attachment.read()
-
-            content_type = (image_attachment.content_type or "").lower()
-            if not content_type.startswith("image/"):
-                suffix = Path(image_attachment.filename).suffix.lower()
-                if suffix == ".png":
-                    content_type = "image/png"
-                elif suffix == ".webp":
-                    content_type = "image/webp"
-                elif suffix == ".gif":
-                    content_type = "image/gif"
-                else:
-                    content_type = "image/jpeg"
-
-            image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-            data_url = f"data:{content_type};base64,{image_b64}"
-
-            text_prompt = (
-                "Write a short 'Menace of the Day' caption based primarily on what is visibly happening in this pet photo. "
-                "This is for a Discord server.\n\n"
-                f"Posted by: {author_name}\n"
-            )
-
-            if cleaned_content:
-                text_prompt += f"Text included with the post: {cleaned_content}\n"
-
-            text_prompt += (
-                "\nRules:\n"
-                "- English only.\n"
-                "- Mean, judgmental, dryly sarcastic, unhinged little menace, but funny rather than cruel.\n"
-                "- Focus on the pet's expression, pose, vibe, or visible chaos.\n"
-                "- You may lightly use the poster context if it helps.\n"
-                "- Do not use bullet points.\n"
-                "- Do not use real Discord mentions or @ symbols.\n"
-                "- Do not mention channel names.\n"
-                "- Exactly one short caption, ideally 1 sentence, max 2 short sentences.\n"
-                "- Under 220 characters.\n"
-            )
-
-            completion = await asyncio.to_thread(
-                self.client.chat.completions.create,
-                model=OPENAI_MODEL,
-                temperature=1.0,
-                max_completion_tokens=120,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are Mittens the Menace writing a tiny 'Menace of the Day' caption for a pet photo "
-                            "in a Discord server. Funny, suspicious, compact, and rude in a playful way."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": text_prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": data_url,
-                                },
-                            },
-                        ],
-                    },
-                ],
-            )
-            text = (completion.choices[0].message.content or "").strip()
-            if text:
-                return clamp_text(text, MAX_MENACE_CAPTION_LENGTH)
-        except Exception as e:
-            print(f"[MorningNews] Menace caption generation failed, using fallback: {e}")
-
-        return fallback
-
     async def generate_news_text(
         self,
         transcript_lines: list[str],
@@ -738,7 +711,9 @@ class MorningNews(commands.Cog):
             "Do not use bullet points. "
             "Do not use real Discord mentions or @ symbols before names. "
             "When referring to someone, use their plain display name only. "
-            "Write the recap as a series of short readable mini-sections, each with a bold funny title and then 1-2 sentences summarizing what that person or small cluster contributed. "
+            "Write the recap as a series of short readable mini-sections, each with a bold funny title, one blank line, and then 1-2 sentences summarizing what that person or small cluster contributed. "
+            f"Keep each section title under {MAX_SECTION_TITLE_LENGTH} characters so it stays on one line in Discord. "
+            "Do not use category labels or bracket tags such as 【COMMON SENSE MISSING】. "
             "Keep quoting to a minimum. "
             "Prefer summary over raw transcript repetition. "
             "Keep it varied, readable, entertaining, and compact. "
@@ -750,8 +725,13 @@ class MorningNews(commands.Cog):
         user_prompt = (
             "Turn this cleaned public transcript into a readable daily recap.\n\n"
             "Formatting rules:\n"
-            "- Each item should look like a little funny headline followed by a short summary.\n"
-            "- Headline must be bold.\n"
+            "- Each item should have a bold funny headline, then one blank line, then a short summary paragraph.\n"
+            f"- Keep every headline under {MAX_SECTION_TITLE_LENGTH} characters so the title stays on one line.\n"
+            "- Use this exact section format:\n"
+            "  **Funny headline**\n\n"
+            "  Short paragraph.\n"
+            f"- Put {DIVIDER} between sections only, never before the first section and never after the last section.\n"
+            "- Do not use category labels or bracket tags such as 【COMMON SENSE MISSING】.\n"
             "- No @ before names.\n"
             "- Keep quotes rare.\n"
             "- Make the recap easy to read in Discord.\n"
@@ -777,7 +757,7 @@ class MorningNews(commands.Cog):
             )
             text = (completion.choices[0].message.content or "").strip()
             if text:
-                return text
+                return normalize_news_format(text)
         except Exception as e:
             print(f"[MorningNews] OpenAI generation failed, using fallback: {e}")
 
