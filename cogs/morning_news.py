@@ -56,6 +56,9 @@ IGNORED_PREFIXES = ("!", "/", ".")
 MAX_LINE_LENGTH = 260
 MAX_TRANSCRIPT_LINES = 180
 MAX_EMBED_BODY_LENGTH = 3500
+MAX_SECTION_TITLE_LENGTH = 48
+MAX_MENACE_IMAGE_BYTES = 8 * 1024 * 1024
+MAX_MENACE_CAPTION_LENGTH = 220
 
 MENTION_RE = re.compile(r"<@!?(?P<id>\d+)>")
 ROLE_MENTION_RE = re.compile(r"<@&(?P<id>\d+)>")
@@ -455,6 +458,24 @@ def split_sections_by_bold_titles(text: str) -> list[str]:
     return ["\n".join(section).strip() for section in sections if "\n".join(section).strip()]
 
 
+def shorten_section_title(title: str, max_len: int = MAX_SECTION_TITLE_LENGTH) -> str:
+    title = normalize_space(title.strip().strip("*"))
+    if len(title) <= max_len:
+        return title
+
+    cut = title[: max_len - 1].rstrip()
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0].rstrip()
+    return (cut or title[: max_len - 1].rstrip()) + "…"
+
+
+def normalize_bold_title_line(line: str) -> str:
+    title = line.strip()
+    if title.startswith("**") and title.endswith("**"):
+        title = title[2:-2]
+    return f"**{shorten_section_title(title)}**"
+
+
 def normalize_section_spacing(section: str) -> str:
     lines = [line.rstrip() for line in section.splitlines()]
     while lines and not lines[0].strip():
@@ -467,6 +488,7 @@ def normalize_section_spacing(section: str) -> str:
 
     first = lines[0].strip()
     if BOLD_TITLE_RE.match(first):
+        first = normalize_bold_title_line(first)
         body = "\n".join(lines[1:]).strip()
         if body:
             return f"{first}\n\n{body}"
@@ -499,7 +521,7 @@ def normalize_news_format(text: str) -> str:
 
 
 def format_section(title: str, body: str) -> str:
-    return f"**{title.strip()}**\n\n{body.strip()}"
+    return f"**{shorten_section_title(title)}**\n\n{body.strip()}"
 
 
 def build_fallback_news(grouped: dict[str, list[str]], total_messages: int) -> str:
@@ -815,6 +837,7 @@ class MorningNews(commands.Cog):
             "Do not use real Discord mentions or @ symbols before names. "
             "When referring to someone, use their plain display name only. "
             "Write the recap as a series of short readable mini-sections, each with a bold funny title, one blank line, and then 1-2 sentences summarizing what that person or small cluster contributed. "
+            f"Keep each section title under {MAX_SECTION_TITLE_LENGTH} characters so it stays on one line in Discord. "
             "Do not use category labels or bracket tags such as 【COMMON SENSE MISSING】. "
             "Keep quoting to a minimum. "
             "Prefer summary over raw transcript repetition. "
@@ -828,6 +851,7 @@ class MorningNews(commands.Cog):
             "Turn this cleaned public transcript into a readable daily recap.\n\n"
             "Formatting rules:\n"
             "- Each item should have a bold funny headline, then one blank line, then a short summary paragraph.\n"
+            f"- Keep every headline under {MAX_SECTION_TITLE_LENGTH} characters so the title stays on one line.\n"
             "- Use this exact section format:\n"
             "  **Funny headline**\n\n"
             "  Short paragraph.\n"
