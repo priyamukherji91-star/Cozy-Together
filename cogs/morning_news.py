@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import logging
 import os
 import random
 import re
@@ -18,6 +19,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from openai import OpenAI
+
+LOG = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────
 # CONFIG
@@ -610,7 +613,7 @@ class MorningNews(commands.Cog):
             self.state.last_live_post_date = today_key
             self.state.save()
         except Exception as e:
-            print(f"[MorningNews] Automatic live post failed: {e}")
+            LOG.error("Automatic live post failed: %s", e)
 
     @post_loop.before_loop
     async def before_post_loop(self) -> None:
@@ -884,7 +887,7 @@ class MorningNews(commands.Cog):
             if text:
                 return normalize_news_format(text)
         except Exception as e:
-            print(f"[MorningNews] OpenAI generation failed, using fallback: {e}")
+            LOG.warning("OpenAI generation failed, using fallback: %s", e)
 
         return build_fallback_news(grouped_messages, total_messages)
 
