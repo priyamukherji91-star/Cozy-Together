@@ -8,9 +8,13 @@ Gatekeeper Cog — Landing Zone ✅ -> role grant
       -> remove Fresh Meat
 """
 
+import logging
+
 import discord
 from discord.ext import commands
 from discord import app_commands
+
+LOG = logging.getLogger(__name__)
 
 # ── IDs ─────────────────────────────────────────
 GUILD_ID             = 1425974791516586045
@@ -74,7 +78,7 @@ class Gatekeeper(commands.Cog):
         try:
             await ch.send(embed=embed)
         except Exception:
-            pass
+            LOG.exception("Failed to send join announcement for member %s", member.id)
 
     # ────────────── LEAVE (embed, no mention) ──────────────
     @commands.Cog.listener()
@@ -103,7 +107,7 @@ class Gatekeeper(commands.Cog):
         try:
             await ch.send(embed=embed)
         except Exception:
-            pass
+            LOG.exception("Failed to send leave announcement for member %s", member)
 
     # ────────────── /setup_gate ──────────────
     @app_commands.command(name="setup_gate", description="Recreate the landing-zone gate message with ✅.")

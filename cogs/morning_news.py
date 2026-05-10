@@ -743,6 +743,7 @@ class MorningNews(commands.Cog):
         except discord.Forbidden:
             return None
         except Exception:
+            LOG.exception("Unexpected error collecting menace of the day")
             return None
 
         if not candidates:
@@ -800,6 +801,7 @@ class MorningNews(commands.Cog):
             except discord.Forbidden:
                 continue
             except Exception:
+                LOG.exception("Unexpected error reading history for channel %s", channel_id)
                 continue
 
         collected.sort(key=lambda item: item[0])
