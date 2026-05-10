@@ -78,7 +78,7 @@ async def _load_extension_safe(ext_name: str) -> bool:
     except commands.ExtensionFailed:
         log.exception("Extension failed: %s", ext_name)
     except commands.ExtensionNotFound:
-        pass
+        log.warning("Extension not found (skipping): %s", ext_name)
     except Exception:
         log.exception("Unexpected error loading %s", ext_name)
     return False
