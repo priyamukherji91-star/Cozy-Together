@@ -1,6 +1,7 @@
 # cogs/mod_logs.py
 # -*- coding: utf-8 -*-
 import datetime
+import logging
 from typing import Iterable, Optional, List, Tuple
 
 import discord
@@ -8,6 +9,8 @@ from discord.ext import commands
 
 GUILD_ID = 1425974791516586045
 LOG_CHANNEL_ID = 1440788870663770302
+
+LOG = logging.getLogger(__name__)
 
 
 def _shorten(text: str, limit: int = 1024) -> str:
@@ -81,9 +84,12 @@ class ModLogs(commands.Cog):
 
         try:
             await channel.send(embed=embed)
+        except discord.Forbidden:
+            LOG.warning("No permission to send log embed to channel %s", channel.id)
+        except discord.HTTPException as exc:
+            LOG.warning("HTTP error sending log embed to channel %s: %s", channel.id, exc)
         except Exception:
-            # Never crash the bot because logs failed
-            pass
+            LOG.exception("Unexpected error sending log embed to channel %s", channel.id)
 
     async def _find_message_deleter(
         self,
@@ -113,7 +119,14 @@ class ModLogs(commands.Cog):
                 if getattr(extra, "channel", None) and getattr(extra.channel, "id", None) != message.channel.id:
                     continue
                 return entry.user
+        except discord.Forbidden:
+            LOG.warning("No permission to read audit logs in guild %s", guild.id)
+            return None
+        except discord.HTTPException as exc:
+            LOG.warning("HTTP error reading audit logs in guild %s: %s", guild.id, exc)
+            return None
         except Exception:
+            LOG.exception("Unexpected error reading audit logs in guild %s", guild.id)
             return None
         return None
 
@@ -137,7 +150,14 @@ class ModLogs(commands.Cog):
                     continue
                 if entry.target and entry.target.id == user.id:
                     return entry.user
+        except discord.Forbidden:
+            LOG.warning("No permission to read audit logs in guild %s", guild.id)
+            return None
+        except discord.HTTPException as exc:
+            LOG.warning("HTTP error reading audit logs in guild %s: %s", guild.id, exc)
+            return None
         except Exception:
+            LOG.exception("Unexpected error reading audit logs in guild %s", guild.id)
             return None
         return None
 
@@ -161,7 +181,14 @@ class ModLogs(commands.Cog):
                     continue
                 if entry.target and entry.target.id == member.id:
                     return entry.user
+        except discord.Forbidden:
+            LOG.warning("No permission to read audit logs in guild %s", guild.id)
+            return None
+        except discord.HTTPException as exc:
+            LOG.warning("HTTP error reading audit logs in guild %s: %s", guild.id, exc)
+            return None
         except Exception:
+            LOG.exception("Unexpected error reading audit logs in guild %s", guild.id)
             return None
         return None
 
@@ -431,8 +458,12 @@ class ModLogs(commands.Cog):
                         if actor:
                             actor_str = f"{actor.mention} (`{actor.id}`)"
                         break
+            except discord.Forbidden:
+                LOG.warning("No permission to read ban audit logs in guild %s", guild.id)
+            except discord.HTTPException as exc:
+                LOG.warning("HTTP error reading ban audit logs in guild %s: %s", guild.id, exc)
             except Exception:
-                pass
+                LOG.exception("Unexpected error reading ban audit logs in guild %s", guild.id)
 
         fields = [
             ("User", f"{user.mention if isinstance(user, discord.Member) else user} (`{user.id}`)", True),
@@ -468,8 +499,12 @@ class ModLogs(commands.Cog):
                         if actor:
                             actor_str = f"{actor.mention} (`{actor.id}`)"
                         break
+            except discord.Forbidden:
+                LOG.warning("No permission to read unban audit logs in guild %s", guild.id)
+            except discord.HTTPException as exc:
+                LOG.warning("HTTP error reading unban audit logs in guild %s: %s", guild.id, exc)
             except Exception:
-                pass
+                LOG.exception("Unexpected error reading unban audit logs in guild %s", guild.id)
 
         fields = [
             ("User", f"{user} (`{user.id}`)", True),
