@@ -284,7 +284,7 @@ class MittensShipping(commands.Cog):
 
         today = datetime.date.today().toordinal()
         combo = tuple(sorted([user1.id, user2.id]))
-        rng = random.Random(int(f"{combo[0]}{combo[1]}{today}"))
+        rng = random.Random(hash((combo, today)))
         score = rng.randint(0, 100)
 
         avatar1_img = await _get_avatar_image(user1)
