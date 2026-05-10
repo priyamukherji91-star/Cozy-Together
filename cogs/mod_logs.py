@@ -71,7 +71,7 @@ class ModLogs(commands.Cog):
             description=_shorten(description or "", 2000) if description else discord.Embed.Empty,
             color=color,
         )
-        embed.timestamp = timestamp or datetime.datetime.utcnow()
+        embed.timestamp = timestamp or discord.utils.utcnow()
 
         if fields:
             for name, value, inline in fields:

@@ -314,7 +314,7 @@ class MittensShipping(commands.Cog):
         )
         embed.set_image(url="attachment://ship.png")
         embed.set_footer(text=f"Ship ID: #{ship_id} • Results reset daily ❤️")
-        embed.timestamp = datetime.datetime.utcnow()
+        embed.timestamp = discord.utils.utcnow()
 
         await interaction.response.send_message(embed=embed, file=ship_file)
 
