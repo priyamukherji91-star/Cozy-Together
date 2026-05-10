@@ -68,7 +68,7 @@ class ModLogs(commands.Cog):
 
         embed = discord.Embed(
             title=title,
-            description=_shorten(description or "", 2000) if description else discord.Embed.Empty,
+            description=_shorten(description or "", 2000) if description else None,
             color=color,
         )
         embed.timestamp = timestamp or discord.utils.utcnow()
