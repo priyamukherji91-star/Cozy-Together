@@ -22,9 +22,14 @@ def _safe_allowed_mentions(allow_user_mentions: bool) -> discord.AllowedMentions
     )
 
 
+_JUMP_URL_RE = re.compile(
+    r"https?://(?:ptb\.|canary\.)?discord(?:app)?\.com/channels/(\d+)/(\d+)/(\d+)"
+)
+
+
 def _is_jump_url(text: str) -> bool:
     # Supports: https://discord.com/channels/<guild>/<channel>/<message>
-    return bool(re.search(r"https?://(?:ptb\.|canary\.)?discord\.com/channels/\d+/\d+/\d+", text.strip()))
+    return bool(_JUMP_URL_RE.search(text.strip()))
 
 
 class MittensSay(commands.Cog):
@@ -157,10 +162,10 @@ class MittensSay(commands.Cog):
         Parses and fetches a Discord message from a jump URL:
         https://discord.com/channels/<guild_id>/<channel_id>/<message_id>
         """
-        parts = url.strip().split("/")
-        guild_id = int(parts[-3])
-        channel_id = int(parts[-2])
-        message_id = int(parts[-1])
+        m = _JUMP_URL_RE.match(url.strip())
+        if not m:
+            raise ValueError("Not a valid Discord jump URL.")
+        guild_id, channel_id, message_id = int(m.group(1)), int(m.group(2)), int(m.group(3))
 
         # Ensure we're in the same guild context
         if interaction.guild is None or interaction.guild.id != guild_id:
