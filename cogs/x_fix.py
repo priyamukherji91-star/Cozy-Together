@@ -140,6 +140,8 @@ class XFixCog(commands.Cog):
         for a in atts:
             if a.size is None:
                 return False
+            if int(a.size) > MAX_FORWARD_ATTACH_TOTAL_BYTES:
+                return False
             total += int(a.size)
             if total > MAX_FORWARD_ATTACH_TOTAL_BYTES:
                 return False
