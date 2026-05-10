@@ -172,6 +172,8 @@ def utc_date_str(dt: datetime) -> str:
 
 
 def fmt_dt(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
     ts = int(dt.timestamp())
     return f"<t:{ts}:F> (<t:{ts}:R>)"
 
