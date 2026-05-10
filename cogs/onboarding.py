@@ -58,6 +58,8 @@ ACTIVITY_ROLE_ENTRIES = [
     ("Unreal", 1452374560694472799),
 ]
 
+_ACTIVITY_ROLE_MAP = {name: role_id for name, role_id in ACTIVITY_ROLE_ENTRIES}
+
 # ── Persistence ───────────────────────────────────────────────────
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(exist_ok=True)
@@ -241,27 +243,27 @@ class ActivityPingView(discord.ui.View):
 
     @discord.ui.button(label="Mount Farms (EX)", style=discord.ButtonStyle.secondary, custom_id="roles_activity_mountfarms", row=0)
     async def mount_farms(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await _toggle_role(interaction, role_id=1444408153285333033, label="Mount Farms (EX)")
+        await _toggle_role(interaction, role_id=_ACTIVITY_ROLE_MAP["Mount Farms (EX)"], label="Mount Farms (EX)")
 
     @discord.ui.button(label="Deep Dungeons", style=discord.ButtonStyle.secondary, custom_id="roles_activity_deepdungeons", row=0)
     async def deep_dungeons(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await _toggle_role(interaction, role_id=1444408253340586137, label="Deep Dungeons")
+        await _toggle_role(interaction, role_id=_ACTIVITY_ROLE_MAP["Deep Dungeons"], label="Deep Dungeons")
 
     @discord.ui.button(label="Treasure Maps", style=discord.ButtonStyle.secondary, custom_id="roles_activity_treasuremaps", row=0)
     async def treasure_maps(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await _toggle_role(interaction, role_id=1444408302778843269, label="Treasure Maps")
+        await _toggle_role(interaction, role_id=_ACTIVITY_ROLE_MAP["Treasure Maps"], label="Treasure Maps")
 
     @discord.ui.button(label="Venue Enthusiasts", style=discord.ButtonStyle.secondary, custom_id="roles_activity_venueenthusiasts", row=1)
     async def venue_enthusiasts(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await _toggle_role(interaction, role_id=1444408362082107393, label="Venue Enthusiasts")
+        await _toggle_role(interaction, role_id=_ACTIVITY_ROLE_MAP["Venue Enthusiasts"], label="Venue Enthusiasts")
 
     @discord.ui.button(label="Daily Roulettes", style=discord.ButtonStyle.secondary, custom_id="roles_activity_dailyroulettes", row=1)
     async def daily_roulettes(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await _toggle_role(interaction, role_id=1444408610485436566, label="Daily Roulettes")
+        await _toggle_role(interaction, role_id=_ACTIVITY_ROLE_MAP["Daily Roulettes"], label="Daily Roulettes")
 
     @discord.ui.button(label="Unreal", style=discord.ButtonStyle.secondary, custom_id="roles_activity_unreal", row=1)
     async def unreal(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await _toggle_role(interaction, role_id=1452374560694472799, label="Unreal")
+        await _toggle_role(interaction, role_id=_ACTIVITY_ROLE_MAP["Unreal"], label="Unreal")
 
 
 # ── Cog ───────────────────────────────────────────────────────────
