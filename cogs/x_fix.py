@@ -99,6 +99,7 @@ class XFixCog(commands.Cog):
         self.bot = bot
         self._recent_ids: set[int] = set()
         self._recent_fps: dict[str, float] = {}
+        self._fp_lock = asyncio.Lock()
         self._sweeper_started = False
 
     # ── Helpers ────────────────────────────────────────────────────────
@@ -113,15 +114,16 @@ class XFixCog(commands.Cog):
         await asyncio.sleep(15)
         self._recent_ids.discard(mid)
 
-    def _mark_and_check_fp(self, fp: str) -> bool:
-        now = time.time()
-        for k, t in list(self._recent_fps.items()):
-            if t <= now:
-                self._recent_fps.pop(k, None)
-        if fp in self._recent_fps:
-            return True
-        self._recent_fps[fp] = now + DEDUP_TTL_SECONDS
-        return False
+    async def _mark_and_check_fp(self, fp: str) -> bool:
+        async with self._fp_lock:
+            now = time.time()
+            for k, t in list(self._recent_fps.items()):
+                if t <= now:
+                    self._recent_fps.pop(k, None)
+            if fp in self._recent_fps:
+                return True
+            self._recent_fps[fp] = now + DEDUP_TTL_SECONDS
+            return False
 
     async def _history_has_same_fp(self, channel: discord.abc.Messageable, fp: str) -> bool:
         try:
@@ -160,7 +162,7 @@ class XFixCog(commands.Cog):
             return
 
         fp = _fingerprint(message.channel.id, fixed)
-        if self._mark_and_check_fp(fp) or await self._history_has_same_fp(message.channel, fp):
+        if await self._mark_and_check_fp(fp) or await self._history_has_same_fp(message.channel, fp):
             return
 
         allow_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True, replied_user=True)
@@ -234,10 +236,11 @@ class XFixCog(commands.Cog):
     async def _on_ready(self):
         async def _sweeper():
             while not self.bot.is_closed():
-                now = time.time()
-                for k, t in list(self._recent_fps.items()):
-                    if t <= now:
-                        self._recent_fps.pop(k, None)
+                async with self._fp_lock:
+                    now = time.time()
+                    for k, t in list(self._recent_fps.items()):
+                        if t <= now:
+                            self._recent_fps.pop(k, None)
                 await asyncio.sleep(60)
         if not self._sweeper_started:
             self._sweeper_started = True
