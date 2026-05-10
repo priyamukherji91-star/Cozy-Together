@@ -248,4 +248,9 @@ class XFixCog(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
+    if not bot.intents.message_content:
+        raise RuntimeError(
+            "cogs.x_fix requires the message_content privileged intent — "
+            "set MESSAGE_CONTENT_INTENT=true in your environment."
+        )
     await bot.add_cog(XFixCog(bot))
