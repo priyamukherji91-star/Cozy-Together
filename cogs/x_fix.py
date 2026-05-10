@@ -207,21 +207,13 @@ class XFixCog(commands.Cog):
         header = f"{poster} ({message.author.mention})"
         fallback_text = f"{header}\n{fixed}"
 
-        try:
-            sent = await message.reply(
-                fallback_text,
-                files=files or None,
-                allowed_mentions=allow_mentions,
-                mention_author=False,
-                suppress=True
-            )
-        except TypeError:
-            sent = await message.reply(
-                fallback_text,
-                files=files or None,
-                allowed_mentions=allow_mentions,
-                mention_author=False,
-            )
+        await message.reply(
+            fallback_text,
+            files=files or None,
+            allowed_mentions=allow_mentions,
+            mention_author=False,
+            suppress_embeds=True,
+        )
 
         # Delete original when safe to avoid doubles
         try:
