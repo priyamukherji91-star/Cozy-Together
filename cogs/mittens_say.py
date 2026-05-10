@@ -84,9 +84,6 @@ class MittensSay(commands.Cog):
         if not text:
             await interaction.response.send_message("Type something for Mittens to say. 😾", ephemeral=True)
             return
-        if len(text) > 2000:
-            await interaction.response.send_message("Too long — keep it under 2000 characters.", ephemeral=True)
-            return
 
         target = channel or interaction.channel
         if target is None:
@@ -103,6 +100,10 @@ class MittensSay(commands.Cog):
                 )
                 return
             content = f"{mention.mention} {text}"
+
+        if len(content) > 2000:
+            await interaction.response.send_message("Too long — keep it under 2000 characters.", ephemeral=True)
+            return
 
         # Ack immediately (ephemeral = no trace)
         await interaction.response.send_message("Sent ✅", ephemeral=True)
