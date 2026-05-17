@@ -184,6 +184,15 @@ class BirthdayStore:
             key=lambda e: (e.month, e.day, e.name.lower()),
         )
 
+    def remove_birthday(self, user_id: int) -> bool:
+        entries = self.load()
+        key = str(user_id)
+        if key not in entries:
+            return False
+        del entries[key]
+        self.save(entries)
+        return True
+
     def entries_for_today(self, now: Optional[datetime] = None) -> list[BirthdayEntry]:
         current = now or datetime.now(BIRTHDAY_TZ)
         day = f"{current.day:02d}"
@@ -355,6 +364,29 @@ class BirthdayCog(commands.Cog):
             ephemeral=False,
             allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
         )
+
+    @birthday.command(name="remove", description="Remove a member's birthday entry.")
+    @app_commands.describe(member="The member whose birthday to remove.")
+    async def birthday_remove(self, interaction: discord.Interaction, member: discord.Member) -> None:
+        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+            return await interaction.response.send_message("Guild only.", ephemeral=True)
+
+        if not self._is_admin_channel(interaction):
+            return await self._deny_admin_channel(interaction)
+        if not self._is_admin_member(interaction.user):
+            return await self._deny_admin(interaction)
+
+        removed = self.store.remove_birthday(member.id)
+        if removed:
+            await interaction.response.send_message(
+                f"Removed {member.display_name}'s birthday. Mittens has crossed them out. 🐾",
+                ephemeral=False,
+            )
+        else:
+            await interaction.response.send_message(
+                f"{member.display_name} wasn't in the birthday list anyway.",
+                ephemeral=True,
+            )
 
     # ──────────────────────────────────────────────────────────────
     # Automatic announcement
