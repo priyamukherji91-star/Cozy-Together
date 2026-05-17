@@ -6,6 +6,7 @@ import os
 import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone, time as dtime
+from pathlib import Path
 
 import discord
 from discord.ext import commands, tasks
@@ -19,7 +20,8 @@ except Exception:
 
 LOG = logging.getLogger(__name__)
 
-STATE_PATH = "data/ffxiv_resets.json"
+DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
+STATE_PATH = DATA_DIR / "ffxiv_resets.json"
 
 # Cozy: default channel for daily/weekly posts
 DEFAULT_CHANNEL_ID = 1425974792745648252
@@ -131,34 +133,34 @@ class ResetState:
 
     @staticmethod
     def load() -> "ResetState":
+        if not STATE_PATH.exists():
+            return ResetState()
         try:
-            with open(STATE_PATH, "r", encoding="utf-8") as f:
-                raw = json.load(f) or {}
+            raw = json.loads(STATE_PATH.read_text(encoding="utf-8")) or {}
             return ResetState(
                 channel_id=raw.get("channel_id"),
                 last_daily_fired_utc_date=raw.get("last_daily_fired_utc_date"),
                 last_weekly_fired_utc_date=raw.get("last_weekly_fired_utc_date"),
             )
-        except FileNotFoundError:
-            return ResetState()
         except Exception:
             LOG.exception("Failed to load %s", STATE_PATH)
             return ResetState()
 
     def save(self) -> None:
         try:
-            os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
-            with open(STATE_PATH, "w", encoding="utf-8") as f:
-                json.dump(
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            STATE_PATH.write_text(
+                json.dumps(
                     {
                         "channel_id": self.channel_id,
                         "last_daily_fired_utc_date": self.last_daily_fired_utc_date,
                         "last_weekly_fired_utc_date": self.last_weekly_fired_utc_date,
                     },
-                    f,
                     ensure_ascii=False,
                     indent=2,
-                )
+                ),
+                encoding="utf-8",
+            )
         except Exception:
             LOG.exception("Failed to save %s", STATE_PATH)
 
@@ -229,6 +231,18 @@ class FFXIVResets(commands.Cog):
     def _channel_id(self) -> int:
         return int(self.state.channel_id or DEFAULT_CHANNEL_ID)
 
+    async def _already_posted_today(self, channel: discord.TextChannel, title: str) -> bool:
+        today_utc = utc_date_str(utc_now())
+        try:
+            async for msg in channel.history(limit=5):
+                if msg.author.id == self.bot.user.id:
+                    for embed in msg.embeds:
+                        if embed.title == title and utc_date_str(msg.created_at) == today_utc:
+                            return True
+        except Exception:
+            pass
+        return False
+
     def _resolve_channel(self, guild: discord.Guild, channel_id: int | None = None) -> discord.TextChannel | None:
         ch = guild.get_channel(channel_id or self._channel_id())
         return ch if isinstance(ch, discord.TextChannel) else None
@@ -271,6 +285,9 @@ class FFXIVResets(commands.Cog):
         daily_line = random.choice(DAILY_LINES)
 
         for guild in self.bot.guilds:
+            ch = self._resolve_channel(guild)
+            if ch is not None and await self._already_posted_today(ch, "☀️ Daily Reset (FFXIV)"):
+                continue
             await self._post_embed(
                 guild,
                 title="☀️ Daily Reset (FFXIV)",
@@ -299,6 +316,9 @@ class FFXIVResets(commands.Cog):
         weekly_line = random.choice(WEEKLY_LINES)
 
         for guild in self.bot.guilds:
+            ch = self._resolve_channel(guild)
+            if ch is not None and await self._already_posted_today(ch, "🗓️ Weekly Reset (FFXIV)"):
+                continue
             await self._post_embed(
                 guild,
                 title="🗓️ Weekly Reset (FFXIV)",

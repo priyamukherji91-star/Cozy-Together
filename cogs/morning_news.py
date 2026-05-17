@@ -46,9 +46,8 @@ TEST_ALLOWED_ROLE_IDS = {
     1425977436859797595,
 }
 
-STATE_DIR = Path("data")
-STATE_DIR.mkdir(parents=True, exist_ok=True)
-STATE_PATH = STATE_DIR / "morning_news_state.json"
+DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
+STATE_PATH = DATA_DIR / "morning_news_state.json"
 
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4")
 
@@ -112,6 +111,7 @@ class MorningNewsState:
         return cls()
 
     def save(self) -> None:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
         payload = {
             "last_live_post_date": self.last_live_post_date,
             "used_live_menace_message_ids": self.used_live_menace_message_ids[-MAX_USED_MENACE_IDS:],
@@ -380,6 +380,18 @@ class MorningNews(commands.Cog):
         if not self.post_loop.is_running():
             self.post_loop.start()
 
+    async def _already_posted_today_in_channel(self, channel: discord.TextChannel) -> bool:
+        today_fragment = local_now().strftime("%B %d, %Y")
+        try:
+            async for msg in channel.history(limit=5):
+                if msg.author.id == self.bot.user.id:
+                    for embed in msg.embeds:
+                        if embed.title and today_fragment in embed.title:
+                            return True
+        except Exception:
+            pass
+        return False
+
     @tasks.loop(minutes=1)
     async def post_loop(self) -> None:
         now = local_now()
@@ -395,13 +407,18 @@ class MorningNews(commands.Cog):
         if not isinstance(channel, discord.TextChannel):
             return
 
+        if await self._already_posted_today_in_channel(channel):
+            self.state.last_live_post_date = today_key
+            self.state.save()
+            return
+
         try:
             embed, menace = await self.build_news_embed(for_test=False)
-            await channel.send(embed=embed)
             self.state.last_live_post_date = today_key
             if menace:
                 self._remember_used_menace(menace.message_id, pool="live")
             self.state.save()
+            await channel.send(embed=embed)
         except Exception as e:
             LOG.error("Automatic live post failed: %s", e)
 
