@@ -35,7 +35,7 @@ POST_WINDOW_MINUTES = 10
 
 # Railway Volume Storage. Railway/Linux paths are case-sensitive.
 # Default to /data, but allow override with DATA_DIR if your Railway volume uses another mount path.
-DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
+DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
 BIRTHDAY_PATH = DATA_DIR / "birthdays.json"
 STATE_PATH = DATA_DIR / "birthday_state.json"
 
