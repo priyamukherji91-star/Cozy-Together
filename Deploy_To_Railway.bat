@@ -1,6 +1,6 @@
 @echo off
-cd /d "C:\Users\Cookiechan\OneDrive\Desktop\Cozy Together"
-railway up --service refreshing-patience
+cd /d "C:\Projects\Cozy Together"
+railway up --service worker
 if errorlevel 1 (
     echo.
     echo ❌ Deployment failed. Check the error above.
