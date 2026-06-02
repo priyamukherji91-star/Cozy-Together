@@ -12,10 +12,19 @@ from discord.ext import commands
 
 TWITTER_DOMAINS = {"twitter.com", "www.twitter.com", "mobile.twitter.com"}
 X_DOMAINS = {"x.com", "www.x.com", "mobile.x.com"}
-SKIP_DOMAINS = {"fxtwitter.com", "vxtwitter.com", "fixupx.com", "fixvx.com"}
+REDDIT_DOMAINS = {"reddit.com", "www.reddit.com", "old.reddit.com"}
+INSTAGRAM_DOMAINS = {"instagram.com", "www.instagram.com"}
+FACEBOOK_DOMAINS = {"facebook.com", "www.facebook.com", "m.facebook.com"}
+SKIP_DOMAINS = {
+    "fxtwitter.com", "vxtwitter.com", "fixupx.com", "fixvx.com",
+    "rxddit.com", "vxreddit.com",
+    "ddinstagram.com",
+    "fxfacebook.com",
+}
+FIXABLE_DOMAINS = ("twitter.com", "x.com", "reddit.com", "instagram.com", "facebook.com")
 
 URL_REGEX = re.compile(r"(?<!<)(https?://[^\s>]+)")
-WEBHOOK_NAME = "FixTweet Bridge"
+WEBHOOK_NAME = "LinkFix Bridge"
 DEDUP_TTL_SECONDS = 30
 HISTORY_DEDUP_LOOKBACK = 8
 MAX_FORWARD_ATTACH_TOTAL_BYTES = 8 * 1024 * 1024
@@ -33,6 +42,12 @@ def _swap_domain(url: str) -> str:
         return url.replace(host, "fxtwitter.com", 1)
     if host in X_DOMAINS:
         return url.replace(host, "fixupx.com", 1)
+    if host in REDDIT_DOMAINS:
+        return url.replace(host, "rxddit.com", 1)
+    if host in INSTAGRAM_DOMAINS:
+        return url.replace(host, "ddinstagram.com", 1)
+    if host in FACEBOOK_DOMAINS:
+        return url.replace(host, "fxfacebook.com", 1)
     return url
 
 
@@ -156,7 +171,7 @@ class XFixCog(commands.Cog):
             return
 
         lcontent = message.content.lower()
-        if ("twitter.com" not in lcontent and "x.com" not in lcontent) or _has_skip_domain(message.content):
+        if not any(d in lcontent for d in FIXABLE_DOMAINS) or _has_skip_domain(message.content):
             return
 
         fixed, num = _fix_message_content(message.content)
@@ -192,7 +207,7 @@ class XFixCog(commands.Cog):
                     avatar_url=avatar_url,
                     files=files or None,
                     allowed_mentions=allow_mentions,
-                    wait=False,
+                    wait=True,
                     thread=thread,
                 )
                 try:
