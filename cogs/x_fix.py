@@ -32,6 +32,15 @@ DEDUP_TTL_SECONDS = 30
 HISTORY_DEDUP_LOOKBACK = 8
 MAX_FORWARD_ATTACH_TOTAL_BYTES = 8 * 1024 * 1024
 
+# Only process messages posted in these channels. Anything else is logged and ignored.
+ALLOWED_CHANNEL_IDS = {
+    1425974830582464522,
+    1425974866741563432,
+    1425974792745648252,
+    1425975425238175764,
+    1425974842762596414,
+}
+
 
 def _swap_domain(url: str) -> str:
     l = url.lower()
@@ -171,26 +180,51 @@ class XFixCog(commands.Cog):
     # ── Listener ───────────────────────────────────────────────────────
     @commands.Cog.listener("on_message")
     async def fix_x_links(self, message: discord.Message):
-        if not message.guild or message.author.bot or not message.content:
+        cid = getattr(message.channel, "id", None)
+        # (2) Fires for EVERY message before any guard — confirms on_message reaches the cog.
+        log.info("on_message: id=%s channel=%s author=%s bot=%s content_len=%d",
+                 message.id, cid, getattr(message.author, "id", "?"),
+                 getattr(message.author, "bot", "?"), len(message.content or ""))
+
+        if not message.guild:
+            log.info("RETURN id=%s: no guild (DM or system message)", message.id)
             return
+        if message.author.bot:
+            log.info("RETURN id=%s channel=%s: author is a bot", message.id, cid)
+            return
+        if not message.content:
+            log.info("RETURN id=%s channel=%s: empty content (message_content intent missing/disabled?)", message.id, cid)
+            return
+
+        # (3) Channel allowlist — only operate in the configured channels.
+        if cid not in ALLOWED_CHANNEL_IDS:
+            log.info("RETURN id=%s: channel %s not in allowlist %s", message.id, cid, sorted(ALLOWED_CHANNEL_IDS))
+            return
+
         if self._mark_and_check_recent_id(message.id):
+            log.info("RETURN id=%s channel=%s: already-seen message id (recent_ids dedup)", message.id, cid)
             return
 
         lcontent = message.content.lower()
-        if not any(d in lcontent for d in FIXABLE_DOMAINS) or _has_skip_domain(message.content):
+        if not any(d in lcontent for d in FIXABLE_DOMAINS):
+            log.info("RETURN id=%s channel=%s: no fixable domain in content", message.id, cid)
+            return
+        if _has_skip_domain(message.content):
+            log.info("RETURN id=%s channel=%s: content already contains a fixed/skip domain", message.id, cid)
             return
 
         fixed, num = _fix_message_content(message.content)
         if num <= 0:
+            log.info("RETURN id=%s channel=%s: no URLs swapped (num=%d)", message.id, cid, num)
             return
 
         fp = _fingerprint(message.channel.id, fixed)
         if await self._mark_and_check_fp(fp):
-            log.info("Deduped (recent fingerprint cache) in channel %s", message.channel.id)
+            log.info("RETURN id=%s channel=%s: deduped (recent fingerprint cache)", message.id, cid)
             return
         if await self._history_has_same_fp(message.channel, fp):
-            log.info("Deduped (matching message in last %d of history) in channel %s — already-fixed link nearby?",
-                     HISTORY_DEDUP_LOOKBACK, message.channel.id)
+            log.info("RETURN id=%s channel=%s: deduped (matching message in last %d of history) — already-fixed link nearby?",
+                     message.id, cid, HISTORY_DEDUP_LOOKBACK)
             return
 
         allow_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True, replied_user=True)
@@ -209,10 +243,10 @@ class XFixCog(commands.Cog):
         # send fails, do nothing (no bot-reply fallback — that causes double posts).
         wh = await _get_or_create_webhook(message.channel)
         if not wh:
-            log.warning("No webhook available for channel %s — skipping (no fallback)", message.channel.id)
+            log.warning("RETURN id=%s channel=%s: no webhook available — skipping (no fallback)", message.id, cid)
             return
         if message.attachments and not forward_attachments:
-            log.info("Skipping channel %s — attachments could not be forwarded", message.channel.id)
+            log.info("RETURN id=%s channel=%s: attachments could not be forwarded", message.id, cid)
             return
 
         try:
@@ -230,18 +264,112 @@ class XFixCog(commands.Cog):
                 thread=thread,
             )
         except Exception:
-            log.exception("Webhook send failed in channel %s — doing nothing (no fallback)", message.channel.id)
+            log.exception("RETURN id=%s channel=%s: webhook send failed — doing nothing (no fallback)", message.id, cid)
             return  # webhook failed — do nothing, no fallback
 
-        log.info("Reposted fixed link via webhook in channel %s (%d url(s) swapped)", message.channel.id, num)
+        log.info("OK id=%s channel=%s: reposted fixed link via webhook (%d url(s) swapped)", message.id, cid, num)
         try:
             await message.delete()
         except Exception:
-            log.warning("Could not delete original message %s in channel %s", message.id, message.channel.id)
+            log.warning("Could not delete original message %s in channel %s", message.id, cid)
+
+    # ── Debug command ──────────────────────────────────────────────────
+    @commands.command(name="fixtest")
+    async def fixtest(self, ctx: commands.Context):
+        """Find the most recent x.com/twitter.com (or other fixable) link in this channel
+        and report how fix_x_links would handle it, including where it would bail out."""
+        target: Optional[discord.Message] = None
+        try:
+            async for msg in ctx.channel.history(limit=50):
+                if msg.id == ctx.message.id:
+                    continue
+                if msg.content and any(d in msg.content.lower() for d in FIXABLE_DOMAINS):
+                    target = msg
+                    break
+        except Exception as e:
+            await ctx.send(f"🔍 fixtest: could not read channel history ({e}).")
+            return
+
+        if target is None:
+            await ctx.send("🔍 fixtest: no message with a fixable link found in the last 50 messages here.")
+            return
+
+        in_allowlist = ctx.channel.id in ALLOWED_CHANNEL_IDS
+        has_fixable = any(d in target.content.lower() for d in FIXABLE_DOMAINS)
+        has_skip = _has_skip_domain(target.content)
+        fixed, num = _fix_message_content(target.content)
+        fp = _fingerprint(ctx.channel.id, fixed)
+        hist_dupe = await self._history_has_same_fp(ctx.channel, fp)
+        wh = await _get_or_create_webhook(ctx.channel)
+        perms = ctx.channel.permissions_for(ctx.guild.me) if ctx.guild else None
+
+        lines = [
+            f"🔍 **fixtest** on message `{target.id}` by **{target.author.display_name}**",
+            f"• channel `{ctx.channel.id}` in allowlist: **{in_allowlist}**",
+            f"• message_content intent (requested): **{self.bot.intents.message_content}** | content len: **{len(target.content or '')}**",
+            f"• author is bot: **{target.author.bot}**",
+            f"• contains fixable domain: **{has_fixable}**",
+            f"• already-fixed/skip domain present: **{has_skip}**",
+            f"• URLs swapped: **{num}**",
+            f"• duplicate in last {HISTORY_DEDUP_LOOKBACK} of history: **{hist_dupe}**",
+            f"• webhook available: **{wh is not None}**",
+        ]
+        if perms is not None:
+            lines.append(f"• perms: manage_webhooks=**{perms.manage_webhooks}** manage_messages=**{perms.manage_messages}**")
+        if num > 0:
+            lines.append(f"• fixed → `{fixed[:300]}`")
+
+        # Verdict: walk the same guards fix_x_links uses, in order.
+        if not in_allowlist:
+            verdict = "❌ Would SKIP: channel not in allowlist."
+        elif target.author.bot:
+            verdict = "❌ Would SKIP: author is a bot."
+        elif not target.content:
+            verdict = "❌ Would SKIP: empty content (intent disabled?)."
+        elif not has_fixable:
+            verdict = "❌ Would SKIP: no fixable domain."
+        elif has_skip:
+            verdict = "❌ Would SKIP: content already contains a fixed/skip domain."
+        elif num <= 0:
+            verdict = "❌ Would SKIP: no URLs swapped."
+        elif hist_dupe:
+            verdict = "❌ Would SKIP: dedup — matching message already in recent history."
+        elif wh is None:
+            verdict = "❌ Would SKIP: no webhook available (check Manage Webhooks permission)."
+        else:
+            verdict = "✅ Would REPOST the fixed link via webhook and delete the original."
+        lines.append(verdict)
+
+        await ctx.send("\n".join(lines))
 
     # ── Cog setup ──────────────────────────────────────────────────────
     @commands.Cog.listener("on_ready")
     async def _on_ready(self):
+        # (5) Confirm the message_content intent is actually live at runtime.
+        #     setup() already refuses to load without it, but log it here too for visibility.
+        #     NOTE: this only reflects what the bot REQUESTED — the matching toggle in the
+        #     Discord Developer Portal must also be ON, or message.content arrives empty.
+        log.info("x_fix ready. Requested message_content intent: %s", self.bot.intents.message_content)
+
+        # (4) Report Manage Webhooks (and related) permissions for each allowlisted channel.
+        for cid in sorted(ALLOWED_CHANNEL_IDS):
+            chan = self.bot.get_channel(cid)
+            if chan is None:
+                try:
+                    chan = await self.bot.fetch_channel(cid)
+                except Exception as e:
+                    log.warning("Allowlist channel %s: cannot fetch (%s) — wrong ID or bot not in that guild?", cid, e)
+                    continue
+            guild = getattr(chan, "guild", None)
+            me = guild.me if guild else None
+            if me is None:
+                log.warning("Allowlist channel %s (#%s): no guild member context", cid, getattr(chan, "name", "?"))
+                continue
+            perms = chan.permissions_for(me)
+            log.info("Allowlist channel %s (#%s): manage_webhooks=%s send_messages=%s manage_messages=%s view_channel=%s",
+                     cid, getattr(chan, "name", "?"),
+                     perms.manage_webhooks, perms.send_messages, perms.manage_messages, perms.view_channel)
+
         async def _sweeper():
             while not self.bot.is_closed():
                 async with self._fp_lock:
