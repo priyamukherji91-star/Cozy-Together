@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import re
 import time
 from typing import Tuple, Optional, Iterable, List
 
 import discord
 from discord.ext import commands
+
+log = logging.getLogger("cozy.x_fix")
 
 TWITTER_DOMAINS = {"twitter.com", "www.twitter.com", "mobile.twitter.com"}
 X_DOMAINS = {"x.com", "www.x.com", "mobile.x.com"}
@@ -80,6 +83,7 @@ async def _get_or_create_webhook(channel: discord.abc.GuildChannel) -> Optional[
         else:
             text_chan = channel if isinstance(channel, discord.TextChannel) else None
         if not text_chan:
+            log.warning("No usable text channel for webhook (channel=%s type=%s)", getattr(channel, "id", "?"), type(channel).__name__)
             return None
 
         hooks = await text_chan.webhooks()
@@ -103,8 +107,10 @@ async def _get_or_create_webhook(channel: discord.abc.GuildChannel) -> Optional[
 
         return wh if wh and wh.token else None
     except discord.Forbidden:
+        log.warning("Forbidden creating/fetching webhook in channel %s — bot likely missing Manage Webhooks", getattr(channel, "id", "?"))
         return None
     except Exception:
+        log.exception("Unexpected error obtaining webhook in channel %s", getattr(channel, "id", "?"))
         return None
 
 
@@ -179,7 +185,12 @@ class XFixCog(commands.Cog):
             return
 
         fp = _fingerprint(message.channel.id, fixed)
-        if await self._mark_and_check_fp(fp) or await self._history_has_same_fp(message.channel, fp):
+        if await self._mark_and_check_fp(fp):
+            log.info("Deduped (recent fingerprint cache) in channel %s", message.channel.id)
+            return
+        if await self._history_has_same_fp(message.channel, fp):
+            log.info("Deduped (matching message in last %d of history) in channel %s — already-fixed link nearby?",
+                     HISTORY_DEDUP_LOOKBACK, message.channel.id)
             return
 
         allow_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True, replied_user=True)
@@ -197,7 +208,11 @@ class XFixCog(commands.Cog):
         # The webhook post IS the replacement. If the webhook is unavailable or the
         # send fails, do nothing (no bot-reply fallback — that causes double posts).
         wh = await _get_or_create_webhook(message.channel)
-        if not wh or (message.attachments and not forward_attachments):
+        if not wh:
+            log.warning("No webhook available for channel %s — skipping (no fallback)", message.channel.id)
+            return
+        if message.attachments and not forward_attachments:
+            log.info("Skipping channel %s — attachments could not be forwarded", message.channel.id)
             return
 
         try:
@@ -215,12 +230,14 @@ class XFixCog(commands.Cog):
                 thread=thread,
             )
         except Exception:
+            log.exception("Webhook send failed in channel %s — doing nothing (no fallback)", message.channel.id)
             return  # webhook failed — do nothing, no fallback
 
+        log.info("Reposted fixed link via webhook in channel %s (%d url(s) swapped)", message.channel.id, num)
         try:
             await message.delete()
         except Exception:
-            pass
+            log.warning("Could not delete original message %s in channel %s", message.id, message.channel.id)
 
     # ── Cog setup ──────────────────────────────────────────────────────
     @commands.Cog.listener("on_ready")
