@@ -253,10 +253,12 @@ class XFixCog(commands.Cog):
             # Build kwargs conditionally: discord.py defaults these to MISSING, and
             # passing None explicitly is treated as "provided" and breaks (files=None
             # raises 'NoneType is not iterable'; thread=None raises on .id).
+            avatar_url = message.author.display_avatar.url
+            log.info("Webhook impersonating %r avatar=%s", message.author.display_name, avatar_url)
             send_kwargs = dict(
                 content=fixed,
                 username=message.author.display_name,
-                avatar_url=message.author.display_avatar.url,
+                avatar_url=avatar_url,
                 allowed_mentions=allow_mentions,
                 wait=True,
             )
