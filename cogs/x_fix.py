@@ -109,7 +109,7 @@ async def _get_or_create_webhook(channel: discord.abc.GuildChannel) -> Optional[
 
 
 class XFixCog(commands.Cog):
-    """Fixes X/Twitter links with one clean message. Shows who posted (webhook impersonation or fallback prefix)."""
+    """Fixes X/Twitter/Reddit/Instagram/Facebook links by reposting once via webhook as the original poster."""
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._recent_ids: set[int] = set()
@@ -193,50 +193,32 @@ class XFixCog(commands.Cog):
             files.clear()
             forward_attachments = False
 
-        # --- Preferred: webhook impersonation (shows UserName • APP) ---
+        # --- Webhook impersonation: delete original and repost once as the poster ---
+        # The webhook post IS the replacement. If the webhook is unavailable or the
+        # send fails, do nothing (no bot-reply fallback — that causes double posts).
         wh = await _get_or_create_webhook(message.channel)
-        if wh and (not message.attachments or forward_attachments):
-            try:
-                username = message.author.display_name
-                avatar_url = message.author.display_avatar.url
-                thread = message.channel if isinstance(message.channel, discord.Thread) else None
+        if not wh or (message.attachments and not forward_attachments):
+            return
 
-                await wh.send(
-                    content=fixed,
-                    username=username,
-                    avatar_url=avatar_url,
-                    files=files or None,
-                    allowed_mentions=allow_mentions,
-                    wait=True,
-                    thread=thread,
-                )
-                try:
-                    await message.delete()
-                except Exception:
-                    pass
-                return
-            except Exception:
-                pass  # fall through
-
-        # --- Fallback: reply as bot, but prefix with the poster’s name/mention ---
-        poster = f"**{message.author.display_name}**"
-        # include a mention too so it's crystal-clear in busy channels
-        header = f"{poster} ({message.author.mention})"
-        fallback_text = f"{header}\n{fixed}"
-
-        await message.reply(
-            fallback_text,
-            files=files or None,
-            allowed_mentions=allow_mentions,
-            mention_author=False,
-            suppress_embeds=True,
-        )
-
-        # Delete original when safe to avoid doubles
         try:
-            perms = message.channel.permissions_for(message.guild.me)
-            if perms.manage_messages and (not message.attachments or forward_attachments):
-                await message.delete()
+            username = message.author.display_name
+            avatar_url = message.author.display_avatar.url
+            thread = message.channel if isinstance(message.channel, discord.Thread) else None
+
+            await wh.send(
+                content=fixed,
+                username=username,
+                avatar_url=avatar_url,
+                files=files or None,
+                allowed_mentions=allow_mentions,
+                wait=True,
+                thread=thread,
+            )
+        except Exception:
+            return  # webhook failed — do nothing, no fallback
+
+        try:
+            await message.delete()
         except Exception:
             pass
 
