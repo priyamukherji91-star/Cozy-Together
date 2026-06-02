@@ -250,19 +250,22 @@ class XFixCog(commands.Cog):
             return
 
         try:
-            username = message.author.display_name
-            avatar_url = message.author.display_avatar.url
-            thread = message.channel if isinstance(message.channel, discord.Thread) else None
-
-            await wh.send(
+            # Build kwargs conditionally: discord.py defaults these to MISSING, and
+            # passing None explicitly is treated as "provided" and breaks (files=None
+            # raises 'NoneType is not iterable'; thread=None raises on .id).
+            send_kwargs = dict(
                 content=fixed,
-                username=username,
-                avatar_url=avatar_url,
-                files=files or None,
+                username=message.author.display_name,
+                avatar_url=message.author.display_avatar.url,
                 allowed_mentions=allow_mentions,
                 wait=True,
-                thread=thread,
             )
+            if files:
+                send_kwargs["files"] = files
+            if isinstance(message.channel, discord.Thread):
+                send_kwargs["thread"] = message.channel
+
+            await wh.send(**send_kwargs)
         except Exception:
             log.exception("RETURN id=%s channel=%s: webhook send failed — doing nothing (no fallback)", message.id, cid)
             return  # webhook failed — do nothing, no fallback
