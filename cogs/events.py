@@ -392,11 +392,13 @@ class EventsCog(commands.Cog):
         )
         try:
             tags = _pick_forum_tags(forum)
+            # No file attachment here on purpose: the event link in the opening post
+            # already unfurls the event's cover image into the thread. Attaching the
+            # file too would show the same image twice.
             created = await forum.create_thread(
                 name=name[:THREAD_NAME_MAX],
                 content=opening_post,
                 applied_tags=tags,
-                file=self._make_file(image_bytes, image_name) or MISSING,
             )
             thread = created.thread
         except discord.Forbidden:
