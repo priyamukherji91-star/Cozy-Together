@@ -33,14 +33,18 @@ Tested against discord.py 2.4.x.
 """
 from __future__ import annotations
 
+import asyncio
 import io
+import json
 import logging
+import os
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord.utils import MISSING
 
 try:
@@ -66,6 +70,30 @@ ALLOWED_ROLE_IDS = {1425977436859797595, 1426194314337189949}
 # Everyone is UK-based, so typed times are always UK local. "Europe/London" is the
 # tz-database name for the UK zone; it auto-handles GMT/BST.
 UK_TZ_NAME = "Europe/London"
+
+# ── Reminders ─────────────────────────────────────────────────
+# One reminder, fired 1 hour before the event starts. Restart-safe: the loop re-reads
+# events from Discord each tick and records what it has sent in a JSON ledger on the
+# Railway volume (same DATA_DIR the other cogs use), keyed by "event_id:offset_seconds".
+DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
+STATE_PATH = DATA_DIR / "events_reminders.json"
+
+REMINDER_OFFSET = timedelta(hours=1)
+REMINDER_OFFSET_KEY = str(int(REMINDER_OFFSET.total_seconds()))  # "3600"
+# If the bot was offline past the 1-hour mark, only still fire within this grace window
+# (the copy says "60 minutes", so firing much later would be a lie) — otherwise suppress.
+REMINDER_CATCHUP_GRACE = timedelta(minutes=10)
+
+# {event} = name, {event_link} = discord.com/events URL, {thread} = forum jump_url.
+PUBLIC_REMINDER = (
+    'Reminder: "{event}" begins in 60 minutes. I did the hard part. Showing up is '
+    "*your* job. Bring Tuna and Dreamies. 🐾\n{event_link}\n{thread}"
+)
+DM_REMINDER = (
+    'You clicked Interested, so this one\'s on you. "{event}" starts in 60 minutes — '
+    "I did the hard part, showing up is *your* job. Bring Tuna and Dreamies. "
+    "I'm watching. 🐾\n{event_link}\n{thread}"
+)
 
 DEFAULT_DURATION_MINUTES = 120  # external events require an end time; default start + 2h
 MAX_DURATION_MINUTES = 60 * 24 * 7  # one week ceiling, just to catch typos
@@ -158,6 +186,13 @@ def _is_image(attachment: discord.Attachment) -> bool:
     return (attachment.content_type or "").lower().startswith("image/")
 
 
+def _format_reminder(template: str, event_name: str, event_link: str, thread_url: Optional[str]) -> str:
+    # Drop the trailing {thread} line cleanly when there's no thread to link.
+    return template.format(
+        event=event_name, event_link=event_link, thread=thread_url or ""
+    ).rstrip()
+
+
 # ──────────────────────────────────────────────────────────────
 # Popup form (modal)
 # ──────────────────────────────────────────────────────────────
@@ -217,6 +252,16 @@ class EventModal(discord.ui.Modal, title="Create an event"):
 class EventsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # Guards the JSON ledger against the create-path and the loop writing at once.
+        self._state_lock = asyncio.Lock()
+
+    async def cog_load(self) -> None:
+        if not self.reminder_loop.is_running():
+            self.reminder_loop.start()
+
+    def cog_unload(self) -> None:
+        if self.reminder_loop.is_running():
+            self.reminder_loop.cancel()
 
     @app_commands.command(
         name="event",
@@ -372,6 +417,16 @@ class EventsCog(commands.Cog):
 
         thread_link = thread.jump_url
 
+        # Persist the event->thread mapping so the 1h reminder can link the thread,
+        # even after a restart (the loop has no other record of which thread is which).
+        try:
+            async with self._state_lock:
+                state = self._load_state()
+                state["threads"][str(scheduled_event.id)] = thread_link
+                self._save_state(state)
+        except Exception:
+            LOG.exception("Failed to persist event->thread mapping (reminder may omit the thread link)")
+
         # ── Step 3: tie the event back to the thread ───────────
         tied_description = description
         link_line = f"\n\n💬 Discussion thread: {thread_link}"
@@ -444,6 +499,146 @@ class EventsCog(commands.Cog):
             await event.delete()
         except discord.HTTPException:
             LOG.exception("Failed to roll back scheduled event %s", event.id)
+
+    # ──────────────────────────────────────────────────────────
+    # Reminders — restart-safe 1-hour-before nudge.
+    # ──────────────────────────────────────────────────────────
+    @tasks.loop(minutes=1)
+    async def reminder_loop(self) -> None:
+        guild = self.bot.get_guild(GUILD_ID)
+        if guild is None:
+            return
+        channel = guild.get_channel(GENERAL_CHANNEL_ID)
+        if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+            return
+
+        # The events live server-side, so we re-read them every tick — nothing about
+        # the schedule is kept in memory or needs to survive a restart.
+        try:
+            events = await guild.fetch_scheduled_events()
+        except discord.HTTPException:
+            LOG.exception("fetch_scheduled_events failed")
+            return
+
+        now = datetime.now(timezone.utc)
+        async with self._state_lock:
+            state = self._load_state()
+            sent: Dict[str, bool] = state["sent"]
+            threads: Dict[str, str] = state["threads"]
+            live_ids = set()
+            changed = False
+
+            for ev in events:
+                try:
+                    if ev.status is not discord.EventStatus.scheduled or ev.start_time is None:
+                        continue
+                    live_ids.add(str(ev.id))
+
+                    key = f"{ev.id}:{REMINDER_OFFSET_KEY}"
+                    if key in sent:
+                        continue
+
+                    trigger = ev.start_time - REMINDER_OFFSET
+                    if now < trigger:
+                        continue  # not time yet
+
+                    # Stale: event already started, or we're so far past the 1-hour mark
+                    # (after downtime) that "60 minutes" would be wrong. Suppress silently.
+                    if now >= ev.start_time or now > trigger + REMINDER_CATCHUP_GRACE:
+                        sent[key] = True
+                        changed = True
+                        continue
+
+                    thread_url = self._thread_for(ev, threads)
+                    event_link = _event_url(guild.id, ev.id)
+                    await self._fire_reminder(ev, channel, event_link, thread_url)
+                    sent[key] = True
+                    changed = True
+                except Exception:
+                    LOG.exception("Reminder handling failed for event %s", getattr(ev, "id", "?"))
+
+            # Prune ledger entries for events that are no longer scheduled (started,
+            # cancelled, or deleted) so the file can't grow without bound.
+            for key in list(sent.keys()):
+                if key.split(":", 1)[0] not in live_ids:
+                    del sent[key]
+                    changed = True
+            for eid in list(threads.keys()):
+                if eid not in live_ids:
+                    del threads[eid]
+                    changed = True
+
+            if changed:
+                self._save_state(state)
+
+    @reminder_loop.before_loop
+    async def _before_reminder_loop(self) -> None:
+        await self.bot.wait_until_ready()
+
+    async def _fire_reminder(
+        self,
+        ev: discord.ScheduledEvent,
+        channel: discord.abc.Messageable,
+        event_link: str,
+        thread_url: Optional[str],
+    ) -> None:
+        # Public nudge in #general — no ping, just visible.
+        public = _format_reminder(PUBLIC_REMINDER, ev.name, event_link, thread_url)
+        try:
+            await channel.send(public, allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException:
+            LOG.exception("Failed to post public reminder for event %s", ev.id)
+
+        # DM each subscriber (people who clicked Interested). Restart-safe: the list
+        # lives on Discord. Skip silently if their DMs are closed.
+        dm = _format_reminder(DM_REMINDER, ev.name, event_link, thread_url)
+        try:
+            async for user in ev.users():
+                try:
+                    await user.send(dm)
+                except discord.HTTPException:
+                    pass  # DMs off, blocked, or a bot — not our problem
+        except discord.HTTPException:
+            LOG.exception("Failed to enumerate subscribers for event %s", ev.id)
+
+    @staticmethod
+    def _thread_for(ev: discord.ScheduledEvent, threads: Dict[str, str]) -> Optional[str]:
+        url = threads.get(str(ev.id))
+        if url:
+            return url
+        # Fallback for events we didn't record (e.g. created before this feature): we
+        # set the event's location to the thread jump_url, so reuse it if it looks right.
+        loc = ev.location or ""
+        return loc if loc.startswith("https://discord.com/channels/") else None
+
+    # ── JSON ledger on the Railway volume ──────────────────────
+    @staticmethod
+    def _ensure_dir() -> None:
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            LOG.exception("Could not create events data directory: %s", DATA_DIR)
+
+    def _load_state(self) -> Dict[str, dict]:
+        self._ensure_dir()
+        if not STATE_PATH.exists():
+            return {"sent": {}, "threads": {}}
+        try:
+            raw = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+            return {
+                "sent": dict(raw.get("sent", {})),
+                "threads": dict(raw.get("threads", {})),
+            }
+        except Exception:
+            LOG.exception("Failed to load events reminder state; starting empty.")
+            return {"sent": {}, "threads": {}}
+
+    def _save_state(self, state: Dict[str, dict]) -> None:
+        self._ensure_dir()
+        try:
+            STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        except Exception:
+            LOG.exception("Failed to save events reminder state")
 
 
 async def setup(bot: commands.Bot) -> None:
