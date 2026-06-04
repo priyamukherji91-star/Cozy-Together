@@ -5,3 +5,4 @@ openai>=1.42
 yt-dlp
 pillow
 python-dotenv
+tzdata
