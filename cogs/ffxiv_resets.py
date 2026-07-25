@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone, time as dtime
 from pathlib import Path
 
@@ -86,6 +86,27 @@ WEEKLY_LINES = [
 ]
 
 
+# How many recently used lines to remember and avoid reusing.
+DAILY_LINE_MEMORY = 12
+WEEKLY_LINE_MEMORY = 3
+
+
+def pick_line(pool: list[str], recent: list[str], memory: int) -> tuple[str, list[str]]:
+    """Pick a line from pool, avoiding the most recently used ones.
+
+    Returns the chosen line plus the updated recent list to persist.
+    Lines are stored as text so editing the pools can't scramble the memory.
+    """
+    memory = max(0, min(memory, len(pool) - 1))
+    if memory <= 0:
+        return random.choice(pool), []
+
+    blocked = set(recent[-memory:])
+    choices = [line for line in pool if line not in blocked] or list(pool)
+    line = random.choice(choices)
+    return line, [*recent, line][-memory:]
+
+
 def _member_has_power(member: discord.Member) -> bool:
     names = {r.name for r in member.roles}
     return (
@@ -106,6 +127,8 @@ class ResetState:
     channel_id: int | None = None
     last_daily_fired_utc_date: str | None = None   # "YYYY-MM-DD"
     last_weekly_fired_utc_date: str | None = None  # "YYYY-MM-DD"
+    recent_daily_lines: list[str] = field(default_factory=list)
+    recent_weekly_lines: list[str] = field(default_factory=list)
 
     @staticmethod
     def load() -> "ResetState":
@@ -117,6 +140,8 @@ class ResetState:
                 channel_id=raw.get("channel_id"),
                 last_daily_fired_utc_date=raw.get("last_daily_fired_utc_date"),
                 last_weekly_fired_utc_date=raw.get("last_weekly_fired_utc_date"),
+                recent_daily_lines=list(raw.get("recent_daily_lines") or []),
+                recent_weekly_lines=list(raw.get("recent_weekly_lines") or []),
             )
         except Exception:
             LOG.exception("Failed to load %s", STATE_PATH)
@@ -131,6 +156,8 @@ class ResetState:
                         "channel_id": self.channel_id,
                         "last_daily_fired_utc_date": self.last_daily_fired_utc_date,
                         "last_weekly_fired_utc_date": self.last_weekly_fired_utc_date,
+                        "recent_daily_lines": self.recent_daily_lines,
+                        "recent_weekly_lines": self.recent_weekly_lines,
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -258,7 +285,9 @@ class FFXIVResets(commands.Cog):
         if self.state.last_daily_fired_utc_date == today:
             return
 
-        daily_line = random.choice(DAILY_LINES)
+        daily_line, self.state.recent_daily_lines = pick_line(
+            DAILY_LINES, self.state.recent_daily_lines, DAILY_LINE_MEMORY
+        )
 
         for guild in self.bot.guilds:
             ch = self._resolve_channel(guild)
@@ -289,7 +318,9 @@ class FFXIVResets(commands.Cog):
         if self.state.last_weekly_fired_utc_date == today:
             return
 
-        weekly_line = random.choice(WEEKLY_LINES)
+        weekly_line, self.state.recent_weekly_lines = pick_line(
+            WEEKLY_LINES, self.state.recent_weekly_lines, WEEKLY_LINE_MEMORY
+        )
 
         for guild in self.bot.guilds:
             ch = self._resolve_channel(guild)
