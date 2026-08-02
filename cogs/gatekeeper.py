@@ -104,6 +104,11 @@ class Gatekeeper(commands.Cog):
         )
         embed.set_footer(text="Cozy Together")
 
+        # ✅ avatar thumbnail (same as the join embed)
+        avatar = getattr(member, "display_avatar", None)
+        if avatar is not None:
+            embed.set_thumbnail(url=avatar.url)
+
         try:
             await ch.send(embed=embed)
         except Exception:
