@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import os
@@ -10,16 +11,30 @@ import random
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from openai import OpenAI
 
 LOG = logging.getLogger(__name__)
+
+# The renderer deliberately lives outside cogs/ — bot.py auto-loads cogs/*.py as
+# extensions and newspaper.py has no setup(bot). If it can't be imported the cog
+# still loads and posts the old text embed.
+try:
+    from newsroom.newspaper import BRIEF_COUNT, NewspaperContent, render_front_page
+    RENDERER_AVAILABLE = True
+except Exception:  # pragma: no cover - import-time degradation
+    LOG.exception("Newspaper renderer unavailable; falling back to text embeds")
+    BRIEF_COUNT = 8
+    NewspaperContent = None  # type: ignore[assignment]
+    render_front_page = None  # type: ignore[assignment]
+    RENDERER_AVAILABLE = False
 
 # ──────────────────────────────────────────────────────────────
 # CONFIG
@@ -56,13 +71,37 @@ POST_WINDOW_MINUTES = 10
 IGNORED_PREFIXES = ("!", "/", ".")
 MAX_LINE_LENGTH = 260
 MAX_TRANSCRIPT_LINES = 180
-MAX_EMBED_BODY_LENGTH = 3500
-MAX_SECTION_TITLE_LENGTH = 60
 MAX_MENACE_CAPTION_LENGTH = 220
 MENACE_LOOKBACK_HOURS = 48
 MAX_USED_MENACE_IDS = 100
 MAX_NEWS_IMAGES_ANALYZED = int(os.getenv("MORNING_NEWS_MAX_IMAGES", "10"))
 MAX_NEWS_IMAGES_PER_MESSAGE = 1
+
+# ── Front page ────────────────────────────────────────────────
+PAPER_NAME = "Mitten's Morning News"
+PAPER_STANDFIRST = "The paper of record for Cozy Together"
+PAPER_COLOPHON = (
+    "Printed overnight by Mittens the Menace · Complaints may be filed with the void · Set in Noto Serif"
+)
+# Issue numbering runs from the day the column started, so the masthead ages.
+PAPER_EPOCH = date(2025, 10, 1)
+
+# Message content on a file post caps at 2000 characters, not the 4096 an embed
+# description allows.
+MAX_MESSAGE_CONTENT = 2000
+
+# Generous enough that nothing is cut on a normal day. The model is told these
+# numbers so it writes to them rather than being trimmed.
+LEAD_HEADLINE_MAX = 72
+LEAD_BODY_MAX = 950
+BRIEF_HEADLINE_MAX = 52
+BRIEF_BODY_MAX = 300
+TEASE_MAX = 130
+SECTION_COUNT = 1 + BRIEF_COUNT  # one lead plus the briefs the page prints
+
+MAX_PHOTO_BYTES = 12 * 1024 * 1024
+PHOTO_TIMEOUT_SECONDS = 25
+PHOTO_CHUNK_BYTES = 64 * 1024
 
 VALID_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 
@@ -152,6 +191,15 @@ class MenaceCandidate:
     image_key: str = ""
 
 
+@dataclass
+class Story:
+    """What the model returned, already cleaned and length-capped."""
+    tease: str
+    lead_headline: str
+    lead_body: str
+    briefs: list[tuple[str, str]] = field(default_factory=list)
+
+
 # ──────────────────────────────────────────────────────────────
 # HELPERS
 # ──────────────────────────────────────────────────────────────
@@ -178,6 +226,54 @@ def clamp_text(text: str, max_len: int) -> str:
     if len(text) <= max_len:
         return text
     return text[: max_len - 1].rstrip() + "…"
+
+
+# Markdown line markers are stripped once, here at the parse boundary. Doing it per
+# consumer means a headline arriving as "### Foo" gets re-prefixed into "### ### Foo".
+MD_LINE_MARKER_RE = re.compile(r"^\s*(?:#{1,6}\s+|[-*+]\s+|>\s+|\d{1,2}[.)]\s+)+")
+# Delimiters that are themselves escaped (\_foo\_) are not emphasis — matching them
+# strips the underscores and strands the backslashes on the page. Underscores get a
+# word-boundary rule as well, so snake_case_names survive intact.
+MD_EMPHASIS_RES = (
+    re.compile(r"(?<!\\)(\*\*|\*|`)(?=\S)(.+?)(?<=[^\s\\])\1"),
+    re.compile(r"(?<![\w\\])(__|_)(?=\S)(.+?)(?<=[^\s\\])\1(?!\w)"),
+)
+MD_ESCAPE_RE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!>~|])")
+
+
+def unescape_markdown(text: str) -> str:
+    """Undo escape_markdown. Display names reach the model already escaped for
+    embeds, so 'sam\\_cool' would otherwise print its backslash on the page."""
+    return MD_ESCAPE_RE.sub(r"\1", text or "")
+
+
+def strip_markdown(text: str) -> str:
+    """Flatten model markdown into the plain text the page prints."""
+    text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [MD_LINE_MARKER_RE.sub("", line).strip() for line in text.split("\n")]
+    text = " ".join(line for line in lines if line)
+    for _ in range(3):  # nested emphasis, e.g. ***shouting***
+        changed = 0
+        for pattern in MD_EMPHASIS_RES:
+            text, count = pattern.subn(r"\2", text)
+            changed += count
+        if not changed:
+            break
+    # After emphasis, so an escaped \* is not resurrected into a delimiter.
+    return normalize_space(unescape_markdown(text))
+
+
+def truncate_words(text: str, max_len: int) -> str:
+    """Truncate on a word boundary. A mid-word cut like 'They fou…' reads as a bug
+    rather than an edit, so anything the page prints comes through here."""
+    text = text.strip()
+    if len(text) <= max_len:
+        return text
+    cut = text[: max_len - 1]
+    space = cut.rfind(" ")
+    if space > max_len * 0.5:
+        cut = cut[:space]
+    return cut.rstrip(" ,;:.!?—–-") + "…"
 
 
 def is_command_like(content: str) -> bool:
@@ -367,29 +463,89 @@ def normalize_news_format(text: str) -> str:
     return f"\n\n{DIVIDER}\n\n".join(parts)
 
 
-def build_fallback_news(grouped: dict[str, list[str]], total_messages: int) -> str:
+def build_fallback_story(grouped: dict[str, list[str]], total_messages: int) -> Story:
     """Used only when there is genuinely no transcript to pass to the model."""
     if not grouped:
-        return (
-            f"**{random.choice(QUIET_OPENERS[:2])}**\n\n"
-            "There was nothing on record worth reporting. "
-            "This either means the day was unusually peaceful, or that everyone was careful. "
-            "I do not know which is worse."
+        return Story(
+            tease="Nothing happened, and it happened loudly.",
+            lead_headline="Nothing Whatsoever Occurred",
+            lead_body=(
+                f"{random.choice(QUIET_OPENERS[:2])} There was nothing on record worth reporting. "
+                "This either means the day was unusually peaceful, or that everyone was careful. "
+                "I do not know which is worse."
+            ),
+            briefs=[],
         )
 
     ordered = sorted(grouped.items(), key=lambda kv: (-len(kv[1]), kv[0].lower()))
-    chosen = ordered[:min(3, len(ordered))]
-    intro = (
+    lead_body = (
         "The day passed. Things were said. Mittens was unavailable for full comment."
         if total_messages < 25
         else f"Another 24 hours produced {total_messages} messages. The record stands, even without full analysis."
     )
-    parts = [f"**Daily Damage Report**\n\n{intro}"]
-    for name, msgs in chosen:
-        parts.append(f"**{name}**\n\n{name} contributed {len(msgs)} message(s).")
-    if len(grouped) > len(chosen):
-        extras = len(grouped) - len(chosen)
-        parts.append(f"**Also Present**\n\n{extras} others were there too.")
+    briefs = [
+        (name, f"{name} contributed {len(msgs)} message(s) and will be watched accordingly.")
+        for name, msgs in ordered[:BRIEF_COUNT]
+    ]
+    return Story(
+        tease=f"{total_messages} messages, no analysis, all consequences.",
+        lead_headline="Daily Damage Report",
+        lead_body=lead_body,
+        briefs=briefs,
+    )
+
+
+def parse_story(raw: str | None) -> Story | None:
+    """Turn the model's JSON into a Story.
+
+    This is the single parse boundary: markdown markers are stripped and lengths
+    capped here, once, so no downstream consumer has to think about either.
+    """
+    try:
+        data = json.loads(raw or "")
+    except (json.JSONDecodeError, TypeError):
+        LOG.warning("Model response was not valid JSON")
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    sections: list[tuple[str, str]] = []
+    for item in data.get("sections") or []:
+        if not isinstance(item, dict):
+            continue
+        headline = strip_markdown(str(item.get("headline") or ""))
+        body = strip_markdown(str(item.get("body") or ""))
+        if headline or body:
+            sections.append((headline, body))
+
+    if not sections:
+        return None
+
+    lead_headline, lead_body = sections[0]
+    # Anything past the printed section count was written and would be silently
+    # dropped; trimming here keeps that explicit.
+    briefs = [
+        (truncate_words(h, BRIEF_HEADLINE_MAX), truncate_words(b, BRIEF_BODY_MAX))
+        for h, b in sections[1 : 1 + BRIEF_COUNT]
+    ]
+
+    return Story(
+        tease=truncate_words(strip_markdown(str(data.get("tease") or "")), TEASE_MAX),
+        lead_headline=truncate_words(lead_headline, LEAD_HEADLINE_MAX) or "The Day In Question",
+        lead_body=truncate_words(lead_body, LEAD_BODY_MAX),
+        briefs=briefs,
+    )
+
+
+def story_to_markdown(story: Story) -> str:
+    """Flatten a Story back to the divider-separated blob the text embed uses."""
+    parts: list[str] = []
+    if story.tease:
+        parts.append(story.tease)
+    for headline, body in [(story.lead_headline, story.lead_body), *story.briefs]:
+        if headline or body:
+            parts.append(f"**{headline}**\n\n{body}".strip())
     return normalize_news_format(f"\n\n{DIVIDER}\n\n".join(parts))
 
 
@@ -425,10 +581,15 @@ class MorningNews(commands.Cog):
         today_fragment = local_now().strftime("%B %d, %Y")
         try:
             async for msg in channel.history(limit=5):
-                if msg.author.id == self.bot.user.id:
-                    for embed in msg.embeds:
-                        if embed.title and today_fragment in embed.title:
-                            return True
+                if msg.author.id != self.bot.user.id:
+                    continue
+                # The front page carries its title in the message content; the text
+                # fallback still carries it in an embed title.
+                if today_fragment in (msg.content or ""):
+                    return True
+                for embed in msg.embeds:
+                    if embed.title and today_fragment in embed.title:
+                        return True
         except Exception:
             pass
         return False
@@ -454,13 +615,10 @@ class MorningNews(commands.Cog):
             return
 
         try:
-            embed, menace = await self.build_news_embed(for_test=False)
-            await channel.send(embed=embed)
+            await self.deliver_news(channel, pool="live")
             # Only mark the day done after the post actually lands, so a send failure retries
             # next minute (still inside the post window) instead of silently skipping the day.
             self.state.last_live_post_date = today_key
-            if menace:
-                self._remember_used_menace(menace.message_id, menace.image_key, pool="live")
             self.state.save()
         except Exception as e:
             LOG.error("Automatic live post failed: %s", e)
@@ -490,13 +648,11 @@ class MorningNews(commands.Cog):
             return
 
         try:
-            embed, menace = await self.build_news_embed(for_test=True)
-            await channel.send(embed=embed)
-            if menace:
-                self._remember_used_menace(menace.message_id, menace.image_key, pool="test")
-                self.state.save()
+            await self.deliver_news(channel, pool="test")
+            self.state.save()
             await interaction.followup.send("Test post sent. 🐾", ephemeral=True)
         except Exception as e:
+            LOG.exception("Test morning news post failed")
             await interaction.followup.send(f"Test failed: `{e}`", ephemeral=True)
 
     @app_commands.command(
@@ -520,15 +676,13 @@ class MorningNews(commands.Cog):
             return
 
         try:
-            embed, menace = await self.build_news_embed(for_test=False)
-            await channel.send(embed=embed)
+            await self.deliver_news(channel, pool="live")
             # Keep last_live_post_date in sync so the 8am loop doesn't double-post.
             self.state.last_live_post_date = local_now().date().isoformat()
-            if menace:
-                self._remember_used_menace(menace.message_id, menace.image_key, pool="live")
             self.state.save()
             await interaction.followup.send("Repost sent. 🐾", ephemeral=True)
         except Exception as e:
+            LOG.exception("Morning news repost failed")
             await interaction.followup.send(f"Repost failed: `{e}`", ephemeral=True)
 
     def _remember_used_menace(self, message_id: int | None, image_key: str, pool: str) -> None:
@@ -551,7 +705,16 @@ class MorningNews(commands.Cog):
         if len(keys) > MAX_USED_MENACE_IDS:
             del keys[:-MAX_USED_MENACE_IDS]
 
-    async def build_news_embed(self, for_test: bool) -> tuple[discord.Embed, MenaceCandidate | None]:
+    # ──────────────────────────────────────────────────────────
+    # DELIVERY
+    # ──────────────────────────────────────────────────────────
+    async def deliver_news(self, channel: discord.TextChannel, pool: str) -> None:
+        """Build and send the post. Every path sends from here, so a discord.File —
+        which is consumed by the send that uses it — can never be reused.
+
+        Failures degrade rather than drop the post: no photo means a paper without
+        one, and a render failure means the old text embed with the full bodies.
+        """
         now = local_now()
         end_time = now.replace(second=0, microsecond=0)
         start_time = end_time - timedelta(hours=24)
@@ -561,35 +724,163 @@ class MorningNews(commands.Cog):
             end_time=end_time,
         )
 
-        body = await self.generate_news_text(
+        story = await self.generate_story(
             transcript_lines=transcript_lines,
             grouped_messages=grouped_messages,
             total_messages=total_messages,
         )
 
-        pool = "test" if for_test else "live"
         menace = await self.collect_menace_of_the_day(end_time=end_time, pool=pool)
-
+        caption = ""
+        photo_bytes: bytes | None = None
         if menace is not None:
-            caption = await self.generate_menace_caption(menace) or f"{menace.author_name} posted this. I have no further comment."
-            menace_block = build_menace_block(caption)
-        else:
-            menace_block = build_menace_block(random.choice(MENACE_EMPTY_LINES))
+            caption = truncate_words(
+                await self.generate_menace_caption(menace)
+                or f"{menace.author_name} posted this. I have no further comment.",
+                MAX_MENACE_CAPTION_LENGTH,
+            )
+            photo_bytes = await self.download_photo(menace.image_url)
+            if photo_bytes is None:
+                LOG.warning("Menace photo unavailable; printing the paper without one")
 
-        body = f"{body.strip()}\n\n{DIVIDER}\n{menace_block}"
-        body = normalize_news_format(body)
-
-        title_date = now.strftime("%B %d, %Y")
-        embed = discord.Embed(
-            title=f"Mitten's Morning News — {title_date}",
-            description=split_embed_description_preserving_menace(body, limit=MAX_EMBED_BODY_LENGTH),
-            color=discord.Color.random(),
+        title = clamp_text(
+            f"**{PAPER_NAME} — {now.strftime('%B %d, %Y')}**", MAX_MESSAGE_CONTENT
         )
 
+        png: bytes | None = None
+        page = None
+        if RENDERER_AVAILABLE:
+            try:
+                page = self.build_page_content(
+                    now=now,
+                    story=story,
+                    total_messages=total_messages,
+                    menace=menace,
+                    caption=caption,
+                    photo_bytes=photo_bytes,
+                )
+                # Pillow blocks, so the whole render runs off the event loop.
+                png = await asyncio.to_thread(render_front_page, page)
+            except Exception:
+                LOG.exception("Front page render failed; falling back to a text embed")
+
+        photo_printed = False
+        if png is not None:
+            filename = f"mittens-morning-news-{now.strftime('%Y-%m-%d')}.png"
+            # Plain attachment, no embed: Discord fits embed images into a small
+            # bounded box and a full page shrinks to an unreadable sliver. The tease
+            # and the message count are already printed on the page, so repeating
+            # them above the picture would just make the post a wall.
+            await channel.send(content=title, file=discord.File(io.BytesIO(png), filename=filename))
+            # The renderer reports this, not the download: bytes that arrived but
+            # failed to decode never made it onto the page.
+            photo_printed = bool(page and page.photo_printed)
+            if photo_bytes is not None and not photo_printed:
+                LOG.warning("Photo downloaded but did not print; leaving it unspent for tomorrow")
+        else:
+            embed = self.build_fallback_embed(now, story, menace, caption)
+            await channel.send(embed=embed)
+            photo_printed = menace is not None
+
+        # A photo is only spent once it has actually appeared, or a failed render
+        # burns a good photo for tomorrow.
+        if menace is not None and photo_printed:
+            self._remember_used_menace(menace.message_id, menace.image_key, pool=pool)
+
+    def build_page_content(
+        self,
+        now: datetime,
+        story: Story,
+        total_messages: int,
+        menace: MenaceCandidate | None,
+        caption: str,
+        photo_bytes: bytes | None,
+    ) -> "NewspaperContent":
+        issue_no = max(1, (now.date() - PAPER_EPOCH).days + 1)
+        volume = max(1, now.year - PAPER_EPOCH.year + 1)
+
+        photo_label = ""
+        if photo_bytes is not None and menace is not None:
+            # author_name is escaped for embeds; the page is not markdown.
+            photo_label = f"Menace of the day · photograph by {unescape_markdown(menace.author_name)}"
+
+        return NewspaperContent(
+            paper_name=PAPER_NAME,
+            edition_line=f"{PAPER_STANDFIRST} · Vol. {volume} · No. {issue_no} · Free, obviously",
+            dateline=f"{now:%A, %B} {now.day}, {now.year}",
+            messages_line=f"{total_messages:,} messages read",
+            lead_headline=story.lead_headline,
+            lead_body=story.lead_body,
+            tease=story.tease,
+            briefs=story.briefs,
+            photo_bytes=photo_bytes,
+            photo_label=photo_label,
+            photo_caption=caption if photo_bytes is not None else "",
+            colophon=PAPER_COLOPHON,
+        )
+
+    def build_fallback_embed(
+        self,
+        now: datetime,
+        story: Story,
+        menace: MenaceCandidate | None,
+        caption: str,
+    ) -> discord.Embed:
+        """Text-only degradation. Carries the full bodies — an embed description
+        allows 4096 characters, so nothing needs cutting to fit here."""
+        body = story_to_markdown(story)
+        menace_text = caption if menace is not None else random.choice(MENACE_EMPTY_LINES)
+        body = normalize_news_format(f"{body.strip()}\n\n{DIVIDER}\n{build_menace_block(menace_text)}")
+
+        embed = discord.Embed(
+            title=f"{PAPER_NAME} — {now.strftime('%B %d, %Y')}",
+            description=split_embed_description_preserving_menace(body, limit=4096),
+            color=discord.Color.random(),
+        )
         if menace is not None:
             embed.set_image(url=menace.image_url)
+        return embed
 
-        return embed, menace
+    async def download_photo(self, url: str) -> bytes | None:
+        """Fetch the hero photo, draining to EOF.
+
+        resp.content.read(n) returns *up to* n bytes and can stop short, which once
+        handed Pillow a JPEG three bytes shy and silently dropped the photo from the
+        page — so read in a loop until the stream ends and warn on a short body.
+        """
+        timeout = aiohttp.ClientTimeout(total=PHOTO_TIMEOUT_SECONDS)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        LOG.warning("Menace photo fetch returned HTTP %s", resp.status)
+                        return None
+
+                    declared = resp.headers.get("Content-Length", "")
+                    expected = int(declared) if declared.isdigit() else None
+                    if expected is not None and expected > MAX_PHOTO_BYTES:
+                        LOG.warning("Menace photo declares %d bytes; too large", expected)
+                        return None
+
+                    buffer = bytearray()
+                    while True:
+                        chunk = await resp.content.read(PHOTO_CHUNK_BYTES)
+                        if not chunk:
+                            break
+                        buffer.extend(chunk)
+                        if len(buffer) > MAX_PHOTO_BYTES:
+                            LOG.warning("Menace photo exceeded %d bytes; skipping", MAX_PHOTO_BYTES)
+                            return None
+
+                    if expected is not None and len(buffer) != expected:
+                        LOG.warning(
+                            "Menace photo short read: got %d of %d declared bytes",
+                            len(buffer), expected,
+                        )
+                    return bytes(buffer) if buffer else None
+        except Exception as e:
+            LOG.warning("Menace photo download failed: %s", e)
+            return None
 
     async def collect_menace_of_the_day(
         self,
@@ -832,21 +1123,25 @@ class MorningNews(commands.Cog):
 
         return None
 
-    async def generate_news_text(
+    async def generate_story(
         self,
         transcript_lines: list[str],
         grouped_messages: dict[str, list[str]],
         total_messages: int,
-    ) -> str:
+    ) -> Story:
         transcript = "\n".join(transcript_lines).strip()
         if not transcript:
-            return build_fallback_news(grouped_messages, total_messages)
+            return build_fallback_story(grouped_messages, total_messages)
 
         if not self.client:
-            return (
-                "**Mittens Is Unavailable**\n\n"
-                "The recap did not happen today. This is a technical issue, not a judgment call. "
-                "Probably both."
+            return Story(
+                tease="The presses are down and nobody is being held accountable.",
+                lead_headline="Mittens Is Unavailable",
+                lead_body=(
+                    "The recap did not happen today. This is a technical issue, not a judgment "
+                    "call. Probably both."
+                ),
+                briefs=[],
             )
 
         system_prompt = (
@@ -864,69 +1159,115 @@ class MorningNews(commands.Cog):
             "fits what happened. Never invent a loss that isn't in the transcript.\n"
             "- Some transcript lines come from image or screenshot analysis; treat them as normal "
             "context.\n\n"
-            "Calibrate to this tone and format:\n"
-            "the group chat survived another day, barely.\n\n"
-            f"{DIVIDER}\n\n"
-            "**Greg Has Discovered Fire, Apparently**\n\n"
-            "Spent forty minutes explaining a plot twist nobody asked about, lost the thread "
+            "SENTENCE CRAFT:\n"
+            "- Vary sentence shape. Do not open every section the same way and do not run three "
+            "sentences of the same length back to back.\n"
+            "- Any given meme phrase or bit of internet slang gets used ONCE across the whole post. "
+            "Never twice.\n"
+            "- Never end a section on a tidy summarising button — no closing line that restates the "
+            "joke, moralises, or wraps it in a bow. Stop on the last real detail instead.\n"
+            "- Banned vocabulary: delve, tapestry, testament, navigate, landscape, realm, showcase, "
+            "seamless, myriad, moreover, furthermore, in conclusion, dive into, unpack, saga, "
+            "whirlwind, rollercoaster, journey, elevate, resonate, underscore, pivotal, "
+            "ever-evolving, at the end of the day.\n"
+            "- Also banned unless directly quoted: litigation, public record, civic concern, oracle, "
+            "commiserated, bravado, civilian activity, proceedings, public square, affairs, "
+            "documentary titled, fragile civil order.\n\n"
+            "Calibrate to this tone:\n"
+            "Headline: Greg Has Discovered Fire, Apparently\n"
+            "Body: Spent forty minutes explaining a plot twist nobody asked about, lost the thread "
             "halfway through, and still took the victory lap.\n\n"
-            f"{DIVIDER}\n\n"
-            "**Local Man Loses Argument With Himself**\n\n"
-            "Started a hot take, walked it back nine minutes later, then thanked everyone for the "
-            "discourse. There was no discourse. There was only you."
+            "Headline: Local Man Loses Argument With Himself\n"
+            "Body: Started a hot take, walked it back nine minutes later, then thanked everyone for "
+            "the discourse. There was no discourse. There was only you."
         )
 
         user_prompt = (
-            "Turn this cleaned public transcript into today's gossip column.\n\n"
-            "FORMAT RULES:\n"
-            "- One short punchy front-page tease sentence at the very top, before the first "
-            "divider. No bold, no headline format — just one plain sentence.\n"
-            f"- Separate all sections with: {DIVIDER}\n"
-            "- Each section: **Short Headline**\n\nParagraph.\n"
-            f"- Headlines ideally under {MAX_SECTION_TITLE_LENGTH} characters.\n"
-            "- No category tags or bracket labels.\n"
-            "- No bullet points.\n"
-            "- No @ before names. Use plain display names only.\n"
-            "- No channel mentions.\n"
+            "Turn this cleaned public transcript into today's front page.\n\n"
+            "STRUCTURE — this is printed as a newspaper, so the shape is fixed:\n"
+            f"- Return exactly {SECTION_COUNT} sections. The FIRST is the lead story; the other "
+            f"{BRIEF_COUNT} are short briefs. Anything beyond that is written and then dropped, so "
+            "do not write more.\n"
+            "- Pick the day's biggest or funniest thing for the lead. The lead body is the only "
+            "one with room to breathe: 3 to 5 sentences.\n"
+            "- Each brief is 1 to 2 sentences on a different incident or person.\n"
+            "- Plus one 'tease': a single plain sentence for the front page, no headline format.\n\n"
+            "LENGTH LIMITS — anything past these is cut, so write inside them:\n"
+            f"- tease: under {TEASE_MAX} characters.\n"
+            f"- lead headline: under {LEAD_HEADLINE_MAX} characters.\n"
+            f"- lead body: under {LEAD_BODY_MAX} characters.\n"
+            f"- brief headline: under {BRIEF_HEADLINE_MAX} characters.\n"
+            f"- brief body: under {BRIEF_BODY_MAX} characters.\n\n"
+            "RULES:\n"
+            "- Plain text only. No markdown, no bold, no bullet points, no headers, no category "
+            "tags or bracket labels.\n"
+            "- Headlines are newspaper headlines: no trailing full stop.\n"
+            "- No @ before names. Use plain display names only. No channel mentions.\n"
             "- Sparingly quote from the transcript — prefer summary.\n"
-            "- Keep sections punchy: 1 short paragraph, ~2 sentences. Slightly longer only if the "
-            "chaos genuinely deserves it.\n"
             "- Avoid using 'the room', 'the chat', 'the timeline', 'the server' as acting subjects "
             "more than once each — lean on named people instead.\n"
-            "- Aim for 6 to 9 sections total.\n"
-            f"- Keep the whole thing comfortably under {MAX_EMBED_BODY_LENGTH} characters.\n"
             "- Do not target gender, sexuality, race, ethnicity, religion, disability, identity, "
             "body, real trauma, or anything too personal.\n"
             "- Do not invent events, relationships, accusations, or motivations not in the "
-            "transcript.\n"
-            "- Blacklist these words unless directly quoted: litigation, public record, civic "
-            "concern, oracle, commiserated, bravado, civilian activity, proceedings, public "
-            "square, affairs, documentary titled, fragile civil order.\n\n"
+            "transcript.\n\n"
             "Transcript:\n"
             f"{transcript}"
         )
+
+        # Structured output rather than markdown parsed with regex: the page needs
+        # discrete headline/body pairs and a fixed section count, and regex over prose
+        # is where that goes wrong.
+        schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["tease", "sections"],
+            "properties": {
+                "tease": {"type": "string"},
+                "sections": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["headline", "body"],
+                        "properties": {
+                            "headline": {"type": "string"},
+                            "body": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        }
 
         try:
             completion = await asyncio.to_thread(
                 self.client.chat.completions.create,
                 model=OPENAI_MODEL,
                 temperature=1.0,
-                max_completion_tokens=1500,
+                max_completion_tokens=3000,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {"name": "morning_news", "strict": True, "schema": schema},
+                },
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
             )
-            text = (completion.choices[0].message.content or "").strip()
-            if text:
-                return normalize_news_format(text)
+            story = parse_story(completion.choices[0].message.content)
+            if story is not None:
+                return story
+            LOG.warning("Model returned no usable sections; using the napping fallback")
         except Exception as e:
             LOG.warning("OpenAI generation failed: %s", e)
 
-        return (
-            "**Mittens Is Napping**\n\n"
-            "The recap failed to generate today. This is being treated as a personal slight. "
-            "The server's crimes remain unlogged, which is somehow worse."
+        return Story(
+            tease="No paper today. Take it up with the cat.",
+            lead_headline="Mittens Is Napping",
+            lead_body=(
+                "The recap failed to generate today. This is being treated as a personal slight. "
+                "The server's crimes remain unlogged, which is somehow worse."
+            ),
+            briefs=[],
         )
 
 
