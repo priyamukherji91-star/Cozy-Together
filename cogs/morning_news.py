@@ -73,6 +73,11 @@ MAX_LINE_LENGTH = 260
 MAX_TRANSCRIPT_LINES = 180
 MAX_MENACE_CAPTION_LENGTH = 220
 MENACE_LOOKBACK_HOURS = 48
+# The 48h window empties fast: the paper runs daily and never reprints a photo, so
+# two quiet days leave nothing to pick. These are the fallbacks, in order — reach
+# further back for something unused, and only then reprint an old one.
+MENACE_DEEP_LOOKBACK_DAYS = 14
+MENACE_ALLOW_REPEAT = True
 MAX_USED_MENACE_IDS = 100
 MAX_NEWS_IMAGES_ANALYZED = int(os.getenv("MORNING_NEWS_MAX_IMAGES", "10"))
 MAX_NEWS_IMAGES_PER_MESSAGE = 1
@@ -891,13 +896,17 @@ class MorningNews(commands.Cog):
         if not isinstance(channel, discord.TextChannel):
             return None
 
-        start_time = end_time - timedelta(hours=MENACE_LOOKBACK_HOURS)
-        used_ids = set(
+        fresh_start = end_time - timedelta(hours=MENACE_LOOKBACK_HOURS)
+        deep_start = end_time - timedelta(days=MENACE_DEEP_LOOKBACK_DAYS)
+
+        # Kept as lists, not sets: append order is use order, which is what ranks
+        # repeats by how long ago they last ran.
+        used_ids = (
             self.state.used_test_menace_message_ids
             if pool == "test"
             else self.state.used_live_menace_message_ids
         )
-        used_keys = set(
+        used_keys = (
             self.state.used_test_menace_image_keys
             if pool == "test"
             else self.state.used_live_menace_image_keys
@@ -906,12 +915,12 @@ class MorningNews(commands.Cog):
         candidates: list[MenaceCandidate] = []
 
         try:
-            async for msg in channel.history(limit=2000, after=start_time, oldest_first=False):
+            # Scan the deep window and filter later — the used ones are still needed
+            # as the last-resort pool.
+            async for msg in channel.history(limit=2000, after=deep_start, oldest_first=False):
                 if msg.created_at > end_time:
                     continue
                 if msg.author.bot:
-                    continue
-                if msg.id in used_ids:
                     continue
 
                 # Menace must be an uploaded still photo — never a GIF, a video, or a pasted
@@ -921,10 +930,6 @@ class MorningNews(commands.Cog):
                     None,
                 )
                 if attachment is None:
-                    continue
-
-                image_key = menace_image_key(attachment)
-                if image_key in used_keys:
                     continue
 
                 reaction_count = sum(r.count for r in msg.reactions)
@@ -938,7 +943,7 @@ class MorningNews(commands.Cog):
                     posted_at=msg.created_at,
                     reaction_count=reaction_count,
                     context_text=context_text,
-                    image_key=image_key,
+                    image_key=menace_image_key(attachment),
                 ))
 
         except discord.Forbidden:
@@ -950,9 +955,38 @@ class MorningNews(commands.Cog):
         if not candidates:
             return None
 
-        # Most-reacted image wins; recency breaks ties.
-        candidates.sort(key=lambda c: (-c.reaction_count, -c.posted_at.timestamp()))
-        return candidates[0]
+        def last_used_rank(candidate: MenaceCandidate) -> int | None:
+            """Position in the used lists — lower means it ran longer ago. None means
+            it has never run."""
+            ranks = [i for i, mid in enumerate(used_ids) if mid == candidate.message_id]
+            ranks += [i for i, key in enumerate(used_keys) if key == candidate.image_key]
+            return min(ranks) if ranks else None
+
+        def best(pool_: list[MenaceCandidate]) -> MenaceCandidate:
+            # Most-reacted image wins; recency breaks ties.
+            return min(pool_, key=lambda c: (-c.reaction_count, -c.posted_at.timestamp()))
+
+        unused = [c for c in candidates if last_used_rank(c) is None]
+        fresh = [c for c in unused if c.posted_at >= fresh_start]
+
+        if fresh:
+            return best(fresh)
+        if unused:
+            LOG.info(
+                "No unused menace photo in the last %dh; reaching back %d days",
+                MENACE_LOOKBACK_HOURS, MENACE_DEEP_LOOKBACK_DAYS,
+            )
+            return best(unused)
+
+        if not MENACE_ALLOW_REPEAT:
+            return None
+
+        # Everything in the window has run before. Reprint whichever ran longest ago
+        # rather than printing no photo at all.
+        repeat = min(candidates, key=lambda c: (last_used_rank(c), -c.reaction_count))
+        LOG.info("Every menace photo in the last %d days has run; reprinting the oldest",
+                 MENACE_DEEP_LOOKBACK_DAYS)
+        return repeat
 
     async def generate_menace_caption(self, menace: MenaceCandidate) -> str | None:
         if not self.client:
