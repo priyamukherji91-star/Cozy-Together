@@ -5,9 +5,9 @@
 
 # 🐾 Pets are here
 
-Register your own pets with a photo, and feed everyone else's.
+Register your own pets with a photo, feed everyone else's, and ship them with each other.
 
-Everyone gets **6 treats a day**. Every pet remembers who has fed it most — and that person is its **favourite human**.
+Everyone gets **6 treats a day**. Every pet remembers who has fed it most — and that person becomes its **favourite human**.
 
 ## Registering — in <#1427657614061207724>
 
@@ -48,6 +48,25 @@ So it's not first-come-first-served, and it's not permanent. Keep feeding and yo
 
 --- MESSAGE 3 ---
 
+## 💞 Shipping pets — in <#1436115021066408016>
+
+**`/shippet`** pairs a pet with someone and scores them, on the same card `/ship` uses.
+
+- **`pet`** — the pet. Required.
+- **`partner`** — *optional.* Leave it empty to ship the pet with **you**. Otherwise pick from the list, which has **both** pets 🐾 and members 👤 in it.
+
+One command, three things:
+
+- `/shippet pet:Mochi` → **your pet and you**
+- `/shippet pet:Mochi partner:🐾 Luna` → **two pets**
+- `/shippet pet:Mochi partner:👤 Sam` → **a pet and a member**
+
+The pet's registered photo is its half of the card. Pets can't be pinged, so the ping goes to their owner instead.
+
+Scores are **locked in for the day** — same pairing, same number, either order — and reroll at midnight. Exactly like `/ship`.
+
+--- MESSAGE 4 ---
+
 ## Checking on things
 
 All of these go in <#1436115021066408016>:
@@ -61,12 +80,12 @@ All of these go in <#1436115021066408016>:
 
 **`/pet remove`** takes one of yours off the list — the suggestions only show your own pets, so you can't remove someone else's by accident. Mods can remove any of them.
 
---- MESSAGE 4 ---
+--- MESSAGE 5 ---
 
 ## A few last things
 
 - Replies are **public** — everyone sees who fed what. Anything that goes wrong (wrong channel, out of treats, name taken) is shown **only to you**.
-- Once a day, *if* any pets have gone **7+ days** without food, the bot posts a short list. If everyone's been fed, it says nothing at all.
+- Once a day, *if* any pets have gone **7+ days** without food, the bot posts a short list in <#1436115021066408016>. If everyone's been fed, it says nothing at all.
 - Everything is saved to disk, so treats and pets survive restarts.
 
-**Quick start:** go to <#1427657614061207724>, post a photo of your pet, right-click it → **Apps** → **This is my pet**. Then head to <#1436115021066408016> and `/feed` something. 🐾
+**Quick start:** go to <#1427657614061207724>, post a photo of your pet, right-click it → **Apps** → **This is my pet**. Then head to <#1436115021066408016>, `/feed` something, and `/shippet` your pet with a friend. 🐾

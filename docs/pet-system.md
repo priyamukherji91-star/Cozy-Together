@@ -103,6 +103,42 @@ total, its favourite human, and the top five people who have fed it.
 
 ---
 
+## The quiet reminder
+
+Once a day, **if** any pets have gone **7 days or more** without being fed, the
+bot posts a short list of up to four of them in the **bot commands channel** —
+the same place people run `/feed`, so the reminder sits next to the fix.
+
+If nothing has been neglected, it posts nothing at all. Most days, that's what
+happens.
+
+---
+
+## Shipping pets
+
+**`/shippet`** — pairs a pet with someone and gives them a compatibility score,
+using the same card as the normal `/ship`. Bot commands channel only.
+
+- `pet` — the pet. Required.
+- `partner` — **optional.** Leave it empty to ship the pet with *you*. Otherwise
+  pick from the list, which contains **both** pets (🐾) and members (👤).
+
+So one command covers all three:
+
+| What you want | What you type |
+| --- | --- |
+| Your pet and you | `/shippet pet:Mochi` |
+| Two pets | `/shippet pet:Mochi partner:🐾 Luna` |
+| A pet and a member | `/shippet pet:Mochi partner:👤 Sam` |
+
+The pet's registered photo is used as its half of the card. Pets can't be
+pinged, so the mention goes to their owner instead.
+
+Scores are **deterministic per day** — the same pairing gives the same number
+all day, in either order, and rerolls at midnight. Same rules as `/ship`.
+
+---
+
 ## Removing a pet
 
 **`/pet remove`** — removes one of your own pets. The suggestion list only shows
@@ -112,16 +148,6 @@ Moderators (anyone with **Manage Messages**) can remove any pet, and their
 suggestion list shows all of them.
 
 Removing a pet deletes its stored photo too.
-
----
-
-## The quiet reminder
-
-Once a day, **if** any pets have gone **7 days or more** without being fed, the
-bot posts a short list of up to four of them in the bot commands channel.
-
-If nothing has been neglected, it posts nothing at all. Most days, that's what
-happens.
 
 ---
 
