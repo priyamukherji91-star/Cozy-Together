@@ -30,10 +30,14 @@ Two ways. Both ask you for a name before anything is saved.
 
 **2. Right-click a photo you already posted.**
 
-- Right-click (or long-press on mobile) your message → **Apps** → **This is my pet**.
+- Right-click (or long-press on mobile) your message → **Apps** → **Mittens the
+  Menace** → **This is my pet**.
 - A small form opens asking for the name.
 - This only works on **your own** messages, and only on messages with an image
   attached. You can't claim someone else's photo as your pet.
+- **Use a message with only one photo in it.** If you posted several at once,
+  the bot takes the first one and there's no way to pick a different one. Post
+  the pet on its own and register from that.
 
 ### The rules
 
@@ -48,9 +52,22 @@ Two ways. Both ask you for a name before anything is saved.
 Two different people **can** both have a pet called Mochi. You just can't have
 two of your own.
 
-The photo is copied and stored by the bot as a small square thumbnail, so it
-keeps working forever. Deleting your original message in the photos channel does
-not break it.
+### The photo becomes the pet's avatar
+
+**The picture you register is the pet's face from then on.** It's the thumbnail
+on every `/feed` message, the picture on `/petinfo`, and the pet's half of the
+`/shippet` card. So pick one you're happy to see everywhere.
+
+It gets cropped to a **square** and stored at 256×256. The crop aims at the
+busiest part of the picture rather than the dead centre, so a tall portrait
+keeps the animal's head instead of its chest — but a photo where the pet is
+already roughly centred will always come out best.
+
+There's no way to swap the photo later. To change it, `/pet remove` the pet and
+register it again with the picture you want.
+
+The photo is copied and stored by the bot, so it keeps working forever. Deleting
+your original message in the photos channel does not break it.
 
 ---
 
@@ -153,18 +170,10 @@ Removing a pet deletes its stored photo too.
 
 ## What's public and what isn't
 
-Only the social bits are posted where everyone can see them:
-
-| Command | Who sees the reply |
-| --- | --- |
-| `/feed` | **Everyone** — it's the fun part |
-| `/petboard` | **Everyone** — it's the scoreboard |
-| `/shippet` | **Everyone** — it's a card to share |
-| `/pet add` | Only you |
-| `/pet list` | Only you |
-| `/pet remove` | Only you |
-| `/petinfo` | Only you |
-| `/treats` | Only you |
+Everything posts publicly **except registering a pet**. `/pet add` and the
+right-click route both reply only to you, because they're used in the pet photos
+channel where the photos themselves are the point — the confirmation shouldn't
+sit on top of them.
 
 Errors — wrong channel, out of treats, name already taken — are only ever shown
 to you, in every command.

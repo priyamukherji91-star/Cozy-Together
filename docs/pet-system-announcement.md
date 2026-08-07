@@ -14,9 +14,11 @@ Everyone gets **6 treats a day**. Every pet remembers who has fed it most — an
 Two ways, and both ask you for a name first:
 
 - **`/pet add`** — fill in `name`, attach a `photo`.
-- **Right-click a photo you already posted** → **Apps** → **This is my pet** → type the name.
+- **Right-click a photo you already posted** → **Apps** → **Mittens the Menace** → **This is my pet** → type the name.
 
 The right-click route only works on **your own** messages, and only on messages with an image on them. Nobody can claim your pet as theirs.
+
+⚠️ **Use a post with only ONE photo in it.** If your message has several, the bot grabs the first one and you can't pick a different one.
 
 **The rules:**
 - 6 pets each
@@ -24,7 +26,13 @@ The right-click route only works on **your own** messages, and only on messages 
 - No two of your own pets with the same name (two *different* people can both have a Mochi)
 - Photos under 10 MB, and an actual image
 
-Your photo gets copied and stored by the bot, so deleting your original message later won't break anything.
+## 🖼️ The photo becomes the pet's avatar
+
+**The picture you register is that pet's face from then on** — the thumbnail on every `/feed`, the picture on `/petinfo`, and the pet's half of the `/shippet` card. Pick one you're happy to see everywhere.
+
+It's cropped to a **square**, aiming at the busiest part rather than the dead centre, so tall portraits keep the head instead of the chest. A photo where the pet is already roughly centred comes out best.
+
+To change it later: `/pet remove` and register again. Your photo is copied and stored by the bot, so deleting your original message won't break anything.
 
 --- MESSAGE 2 ---
 
@@ -84,13 +92,12 @@ All of these go in <#1436115021066408016>:
 
 ## Who sees what
 
-Only the fun stuff is public. **`/feed`**, **`/petboard`** and **`/shippet`** post for everyone to see.
-
-**`/pet add`**, **`/pet list`**, **`/pet remove`**, **`/petinfo`** and **`/treats`** are shown **only to you** — so registering a pet or browsing the list won't clutter the channel.
+Everything is public **except registering** — **`/pet add`** and the right-click route reply **only to you**, so your confirmation doesn't land on top of the photos in <#1427657614061207724>.
 
 Errors are always private too.
 
 ## A few last things
+
 - Once a day, *if* any pets have gone **7+ days** without food, the bot posts a short list in <#1436115021066408016>. If everyone's been fed, it says nothing at all.
 - Everything is saved to disk, so treats and pets survive restarts.
 
