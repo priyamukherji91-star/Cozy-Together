@@ -151,10 +151,27 @@ Removing a pet deletes its stored photo too.
 
 ---
 
-## Notes
+## What's public and what isn't
 
-- Replies are public, so everyone can see who fed what. Errors — wrong channel,
-  out of treats, name already taken — are only ever shown to you.
+Only the social bits are posted where everyone can see them:
+
+| Command | Who sees the reply |
+| --- | --- |
+| `/feed` | **Everyone** — it's the fun part |
+| `/petboard` | **Everyone** — it's the scoreboard |
+| `/shippet` | **Everyone** — it's a card to share |
+| `/pet add` | Only you |
+| `/pet list` | Only you |
+| `/pet remove` | Only you |
+| `/petinfo` | Only you |
+| `/treats` | Only you |
+
+Errors — wrong channel, out of treats, name already taken — are only ever shown
+to you, in every command.
+
+---
+
+## Notes
 - Treats and pets are stored on disk and survive restarts and redeploys.
 - The allowance rolls over by date, so a restart at midnight can't cause a
   missed or double reset.

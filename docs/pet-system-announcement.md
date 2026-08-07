@@ -82,9 +82,15 @@ All of these go in <#1436115021066408016>:
 
 --- MESSAGE 5 ---
 
-## A few last things
+## Who sees what
 
-- Replies are **public** — everyone sees who fed what. Anything that goes wrong (wrong channel, out of treats, name taken) is shown **only to you**.
+Only the fun stuff is public. **`/feed`**, **`/petboard`** and **`/shippet`** post for everyone to see.
+
+**`/pet add`**, **`/pet list`**, **`/pet remove`**, **`/petinfo`** and **`/treats`** are shown **only to you** — so registering a pet or browsing the list won't clutter the channel.
+
+Errors are always private too.
+
+## A few last things
 - Once a day, *if* any pets have gone **7+ days** without food, the bot posts a short list in <#1436115021066408016>. If everyone's been fed, it says nothing at all.
 - Everything is saved to disk, so treats and pets survive restarts.
 

@@ -187,18 +187,15 @@ class Pets(commands.Cog):
 
         embed = discord.Embed(
             title=f"{pet.name} is registered",
-            description=(
-                f"{interaction.user.mention} registered **{pet.name}**. "
-                f"Feed them with `/feed` in <#{COMMANDS_CHANNEL_ID}>."
-            ),
+            description=f"Feed them with `/feed` in <#{COMMANDS_CHANNEL_ID}>.",
             colour=ACCENT,
         )
         file = await self._thumb(pet)
         if file is not None:
             embed.set_thumbnail(url="attachment://pet.png")
-            await interaction.followup.send(embed=embed, file=file, allowed_mentions=MENTIONS)
+            await interaction.followup.send(embed=embed, file=file, ephemeral=True)
             return
-        await interaction.followup.send(embed=embed, allowed_mentions=MENTIONS)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     # ──────────────────────────────────────────────────────────
     # /pet — add, list, remove
@@ -239,12 +236,12 @@ class Pets(commands.Cog):
             return
         assert interaction.guild is not None
 
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         pets = await asyncio.to_thread(store.all_pets, interaction.guild.id)
         if not pets:
             await interaction.followup.send(
                 f"No pets are registered yet. Add one with `/pet add` in "
-                f"<#{REGISTER_CHANNEL_ID}>."
+                f"<#{REGISTER_CHANNEL_ID}>.", ephemeral=True
             )
             return
 
@@ -256,7 +253,7 @@ class Pets(commands.Cog):
         )
         if len(pets) > 40:
             embed.set_footer(text=f"and {len(pets) - 40} more")
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @pet.command(name="remove", description="Remove one of your pets")
     @app_commands.describe(pet="Which pet to remove")
@@ -290,7 +287,9 @@ class Pets(commands.Cog):
             )
             return
 
-        await interaction.followup.send(f"**{record.name}** has been removed.")
+        await interaction.followup.send(
+            f"**{record.name}** has been removed.", ephemeral=True
+        )
 
     @pet_remove.autocomplete("pet")
     async def _remove_autocomplete(self, interaction: discord.Interaction, current: str):
@@ -410,14 +409,13 @@ class Pets(commands.Cog):
             return
         assert interaction.guild is not None
 
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         left, fed_ids = await asyncio.to_thread(
             store.treats_left, interaction.guild.id, interaction.user.id, TIMEZONE
         )
 
-        lines = [
-            f"{interaction.user.mention} has **{left}** of {store.DAILY_TREATS} treats left today."
-        ]
+        # Only the caller sees this, so it reads as "you" rather than a mention.
+        lines = [f"You have **{left}** of {store.DAILY_TREATS} treats left today."]
         names = []
         for pid in fed_ids:
             fed_pet = await asyncio.to_thread(store.get_pet, interaction.guild.id, pid)
@@ -428,7 +426,7 @@ class Pets(commands.Cog):
         if left == 0:
             lines.append("The allowance resets at midnight.")
 
-        await interaction.followup.send("\n".join(lines), allowed_mentions=MENTIONS)
+        await interaction.followup.send("\n".join(lines), ephemeral=True)
 
     # ──────────────────────────────────────────────────────────
     # /petinfo
@@ -447,7 +445,7 @@ class Pets(commands.Cog):
             )
             return
 
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         stats = await asyncio.to_thread(store.pet_stats, interaction.guild.id, record.pet_id)
         by: dict[str, Any] = stats.get("by", {})
 
@@ -478,9 +476,9 @@ class Pets(commands.Cog):
         file = await self._thumb(record)
         if file is not None:
             embed.set_thumbnail(url="attachment://pet.png")
-            await interaction.followup.send(embed=embed, file=file)
+            await interaction.followup.send(embed=embed, file=file, ephemeral=True)
             return
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @petinfo_cmd.autocomplete("pet")
     async def _petinfo_autocomplete(self, interaction: discord.Interaction, current: str):
