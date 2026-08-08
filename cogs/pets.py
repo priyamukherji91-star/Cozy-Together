@@ -349,17 +349,20 @@ class Pets(commands.Cog):
             )
             return
 
-        await interaction.response.defer(ephemeral=True)
+        # Answered without deferring, because the reply has to be public while the
+        # refusals stay private, and a followup can only be as private as the defer
+        # it came from. The ledger is a small local file, so this stays well inside
+        # the three seconds an interaction gives us.
         try:
             result = await asyncio.to_thread(
                 store.feed, interaction.guild.id, interaction.user.id, record.pet_id, TIMEZONE
             )
         except store.PetError as exc:
-            await interaction.followup.send(str(exc), ephemeral=True)
+            await interaction.response.send_message(str(exc), ephemeral=True)
             return
         except Exception:
             LOG.exception("[pets] feed failed")
-            await interaction.followup.send(
+            await interaction.response.send_message(
                 "Something went wrong. Try again in a moment.", ephemeral=True
             )
             return
@@ -390,9 +393,11 @@ class Pets(commands.Cog):
         file = await self._thumb(record)
         if file is not None:
             embed.set_thumbnail(url="attachment://pet.png")
-            await interaction.followup.send(embed=embed, file=file, allowed_mentions=MENTIONS)
+            await interaction.response.send_message(
+                embed=embed, file=file, allowed_mentions=MENTIONS
+            )
             return
-        await interaction.followup.send(embed=embed, allowed_mentions=MENTIONS)
+        await interaction.response.send_message(embed=embed, allowed_mentions=MENTIONS)
 
     @feed_cmd.autocomplete("pet")
     async def _feed_autocomplete(self, interaction: discord.Interaction, current: str):
