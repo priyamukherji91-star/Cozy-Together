@@ -17,14 +17,15 @@ TWITTER_DOMAINS = {"twitter.com", "www.twitter.com", "mobile.twitter.com"}
 X_DOMAINS = {"x.com", "www.x.com", "mobile.x.com"}
 REDDIT_DOMAINS = {"reddit.com", "www.reddit.com", "old.reddit.com"}
 INSTAGRAM_DOMAINS = {"instagram.com", "www.instagram.com"}
-FACEBOOK_DOMAINS = {"facebook.com", "www.facebook.com", "m.facebook.com"}
+# NOTE: Facebook is deliberately not rewritten. There is no working embed-fixer
+# mirror for it — fxfacebook.com has no DNS record at all, so rewriting to it
+# replaced people's posts with dead links.
 SKIP_DOMAINS = {
     "fxtwitter.com", "vxtwitter.com", "fixupx.com", "fixvx.com",
     "rxddit.com", "vxreddit.com",
     "ddinstagram.com",
-    "fxfacebook.com",
 }
-FIXABLE_DOMAINS = ("twitter.com", "x.com", "reddit.com", "instagram.com", "facebook.com")
+FIXABLE_DOMAINS = ("twitter.com", "x.com", "reddit.com", "instagram.com")
 
 URL_REGEX = re.compile(r"(?<!<)(https?://[^\s>]+)")
 WEBHOOK_NAME = "LinkFix Bridge"
@@ -33,34 +34,39 @@ HISTORY_DEDUP_LOOKBACK = 8
 MAX_FORWARD_ATTACH_TOTAL_BYTES = 8 * 1024 * 1024
 
 # Only process messages posted in these channels. Anything else is logged and ignored.
+# #general (1425974792745648252) is deliberately absent — links are left exactly as
+# posted there.
 ALLOWED_CHANNEL_IDS = {
     1425974830582464522,
     1425974866741563432,
-    1425974792745648252,
     1425975425238175764,
     1425974842762596414,
 }
 
 
 def _swap_domain(url: str) -> str:
-    l = url.lower()
-    if any(d in l for d in SKIP_DOMAINS):
-        return url
+    # Rebuild the URL from its parts rather than str.replace()-ing the host: the
+    # host is lowercased for matching, so replacing it in a mixed-case URL either
+    # missed entirely or, worse, hit a matching substring further down the path.
     try:
-        host = url.split("://", 1)[1].split("/", 1)[0].lower()
-    except Exception:
+        scheme, after = url.split("://", 1)
+    except ValueError:
         return url
-    if host in TWITTER_DOMAINS:
-        return url.replace(host, "fxtwitter.com", 1)
-    if host in X_DOMAINS:
-        return url.replace(host, "fixupx.com", 1)
-    if host in REDDIT_DOMAINS:
-        return url.replace(host, "rxddit.com", 1)
-    if host in INSTAGRAM_DOMAINS:
-        return url.replace(host, "ddinstagram.com", 1)
-    if host in FACEBOOK_DOMAINS:
-        return url.replace(host, "fxfacebook.com", 1)
-    return url
+    host, slash, path = after.partition("/")
+    lhost = host.lower()
+    if lhost in SKIP_DOMAINS:
+        return url
+    if lhost in TWITTER_DOMAINS:
+        new_host = "fxtwitter.com"
+    elif lhost in X_DOMAINS:
+        new_host = "fixupx.com"
+    elif lhost in REDDIT_DOMAINS:
+        new_host = "rxddit.com"
+    elif lhost in INSTAGRAM_DOMAINS:
+        new_host = "ddinstagram.com"
+    else:
+        return url
+    return f"{scheme}://{new_host}{slash}{path}"
 
 
 def _has_skip_domain(text: str) -> bool:
