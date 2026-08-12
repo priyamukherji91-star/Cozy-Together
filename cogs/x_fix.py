@@ -15,17 +15,19 @@ log = logging.getLogger("cozy.x_fix")
 
 TWITTER_DOMAINS = {"twitter.com", "www.twitter.com", "mobile.twitter.com"}
 X_DOMAINS = {"x.com", "www.x.com", "mobile.x.com"}
-REDDIT_DOMAINS = {"reddit.com", "www.reddit.com", "old.reddit.com"}
+# rxddit.com is listed as a source, not a target: Reddit blocked it (it now 502s
+# "Forbidden."), so links already pointing at it get repaired to vxreddit.com too.
+REDDIT_DOMAINS = {"reddit.com", "www.reddit.com", "old.reddit.com", "rxddit.com"}
 INSTAGRAM_DOMAINS = {"instagram.com", "www.instagram.com"}
 # NOTE: Facebook is deliberately not rewritten. There is no working embed-fixer
 # mirror for it — fxfacebook.com has no DNS record at all, so rewriting to it
 # replaced people's posts with dead links.
 SKIP_DOMAINS = {
     "fxtwitter.com", "vxtwitter.com", "fixupx.com", "fixvx.com",
-    "rxddit.com", "vxreddit.com",
+    "vxreddit.com",
     "ddinstagram.com",
 }
-FIXABLE_DOMAINS = ("twitter.com", "x.com", "reddit.com", "instagram.com")
+FIXABLE_DOMAINS = ("twitter.com", "x.com", "reddit.com", "rxddit.com", "instagram.com")
 
 URL_REGEX = re.compile(r"(?<!<)(https?://[^\s>]+)")
 WEBHOOK_NAME = "LinkFix Bridge"
@@ -61,7 +63,7 @@ def _swap_domain(url: str) -> str:
     elif lhost in X_DOMAINS:
         new_host = "fixupx.com"
     elif lhost in REDDIT_DOMAINS:
-        new_host = "rxddit.com"
+        new_host = "vxreddit.com"
     elif lhost in INSTAGRAM_DOMAINS:
         new_host = "ddinstagram.com"
     else:
