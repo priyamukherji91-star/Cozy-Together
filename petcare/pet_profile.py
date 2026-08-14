@@ -63,9 +63,17 @@ BIO: tuple[Field, ...] = (
     ),
 )
 
-# Registration only ever asks these two, so signing up stays quick — the rest is
-# offered straight afterwards and from the edit button.
-BASICS: tuple[Field, ...] = BIO[:2]
+# What registration asks for when it also has to ask for the name — a modal
+# takes five text inputs and the name is one of them, so these are the four that
+# earn the remaining slots. All short, all one-word answers, and `treat` and
+# `toy` are the two that actually drive something: a pet with a favourite is
+# always fed and played with it.
+#
+# "What are they like?" is the one left out. It is the long box, the one people
+# stall on, and the only one nothing mechanical reads — so it goes on the button
+# offered straight after registering instead of standing between somebody and
+# their pet existing.
+SIGNUP: tuple[Field, ...] = BIO[:4]
 
 # Written by an older two-box profile, never offered for editing again. Kept so
 # a pet nobody has edited since still shows what its owner wrote.

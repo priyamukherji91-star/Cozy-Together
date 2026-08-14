@@ -1374,13 +1374,40 @@ class FoodBowlView(discord.ui.View):
 # ──────────────────────────────────────────────────────────────
 # Registration
 # ──────────────────────────────────────────────────────────────
-class ClaimPetModal(discord.ui.Modal):
-    """Registration, from either route. Name, species and year — nothing else.
+def _profile_boxes(
+    modal: discord.ui.Modal, fields: tuple[pet_profile.Field, ...]
+) -> list[tuple[str, discord.ui.TextInput]]:
+    """Add profile inputs to a registration modal, and hand back their keys.
 
-    Deliberately the short half of the profile: making somebody fill in seven
-    boxes before their pet exists is how you end up with no pets registered. The
-    rest is offered on a button straight afterwards, and lives on the pet's card
-    from then on.
+    Only species is required. It is a one-word answer, it is what the panel
+    draws each pet's icon from, and a register full of animals of unknown type
+    is the state this whole change exists to avoid. Everything else is optional
+    on purpose — a required favourite treat would stand between somebody and
+    their pet existing over a detail they may not have decided yet.
+    """
+    boxes: list[tuple[str, discord.ui.TextInput]] = []
+    for field in fields:
+        box = discord.ui.TextInput(
+            label=field.label,
+            placeholder=field.placeholder,
+            max_length=field.cap,
+            required=field.key == "species",
+            style=(
+                discord.TextStyle.paragraph if field.long else discord.TextStyle.short
+            ),
+        )
+        modal.add_item(box)
+        boxes.append((field.key, box))
+    return boxes
+
+
+class ClaimPetModal(discord.ui.Modal):
+    """Registration from the right-click, which has to ask for the name too.
+
+    A modal takes five inputs and the name is one of them, so this asks the four
+    short ones — see `pet_profile.SIGNUP`. "What are they like?" is offered on a
+    button immediately afterwards rather than making somebody write prose before
+    their pet exists.
     """
 
     def __init__(self, cog: "PetCare", image: discord.Attachment) -> None:
@@ -1394,17 +1421,7 @@ class ClaimPetModal(discord.ui.Modal):
             required=True,
         )
         self.add_item(self.pet_name)
-
-        self.boxes: list[tuple[str, discord.ui.TextInput]] = []
-        for field in pet_profile.BASICS:
-            box = discord.ui.TextInput(
-                label=field.label,
-                placeholder=field.placeholder,
-                max_length=field.cap,
-                required=False,
-            )
-            self.add_item(box)
-            self.boxes.append((field.key, box))
+        self.boxes = _profile_boxes(self, pet_profile.SIGNUP)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
@@ -1417,6 +1434,43 @@ class ClaimPetModal(discord.ui.Modal):
             )
         profile = {key: str(box.value or "") for key, box in self.boxes}
         await self.cog._register(interaction, str(self.pet_name), raw, profile)
+
+
+class AddPetModal(discord.ui.Modal):
+    """Registration from `/pet add`, which already has the name and the photo.
+
+    That command used to create the pet the moment it had those two and hand
+    back a button for everything else. Almost nobody pressed the button, so pets
+    registered this way had no species for the panel to draw, no favourite treat
+    to be fed, and nothing on their card — and it was the route most people used.
+
+    With the name in the command, all five boxes are free for the parts that
+    were going unfilled, so this asks the whole bio in one go.
+    """
+
+    def __init__(self, cog: "PetCare", name: str, photo: discord.Attachment) -> None:
+        super().__init__(title="Register this pet")
+        self.cog = cog
+        self.pet_name = name
+        self.photo = photo
+        self.boxes = _profile_boxes(self, pet_profile.BIO)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        try:
+            # Read here rather than before the modal opened: a slash command has
+            # to answer within three seconds and a modal *is* that answer, so
+            # there is no room to download anything first. Attachment links stay
+            # valid long enough for somebody to fill in a form.
+            raw = await self.photo.read()
+        except Exception:
+            log.exception("[pets] could not read attachment")
+            return await interaction.followup.send(
+                "❌ I couldn't download that photo. Try `/pet add` again.",
+                ephemeral=True,
+            )
+        profile = {key: str(box.value or "") for key, box in self.boxes}
+        await self.cog._register(interaction, self.pet_name, raw, profile)
 
 
 class MoreDetailsView(discord.ui.View):
@@ -1914,15 +1968,10 @@ class PetCare(commands.Cog):
                 f"❌ {pet_registry.TOO_BIG}", ephemeral=True
             )
 
-        await interaction.response.defer(ephemeral=True)
-        try:
-            raw = await photo.read()
-        except Exception:
-            log.exception("[pets] could not read attachment")
-            return await interaction.followup.send(
-                "❌ I couldn't download that photo.", ephemeral=True
-            )
-        await self._register(interaction, name, raw)
+        # Every refusal above happens before this, because a modal is the
+        # command's one response — once it opens there is no taking it back and
+        # telling somebody their photo was the wrong sort of file.
+        await interaction.response.send_modal(AddPetModal(self, name, photo))
 
     @pet.command(name="list", description="See every pet registered in the server 🐾")
     async def pet_list(self, interaction: discord.Interaction) -> None:
