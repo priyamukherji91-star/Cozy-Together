@@ -16,7 +16,7 @@ LOG = logging.getLogger(__name__)
 # The pet registry lives outside cogs/ — see petcare/__init__.py. If it can't be
 # imported the ship commands still work; only /shippet drops out.
 try:
-    from petcare import storage as petstore
+    from petcare import pet_registry as petstore
     PETS_AVAILABLE = True
 except Exception:  # pragma: no cover - import-time degradation
     LOG.exception("Pet registry unavailable; /shippet will refuse politely")
