@@ -2929,17 +2929,20 @@ class PetCare(commands.Cog):
         self._after_post()
 
     async def _pet_card(
-        self, guild: discord.Guild, record: pet_registry.Pet, *, large: bool
+        self, guild: discord.Guild, record: pet_registry.Pet, *,
+        large: bool, with_stats: bool = True,
     ) -> tuple[discord.Embed, discord.File | None]:
-        """One pet's public card: its record, its profile, and its photo.
+        """One pet's public card: who they are, and optionally how they're doing.
 
-        `large` is the only difference between the two things that post this —
-        the photo goes full width instead of into the corner. Built once rather
-        than twice so the About button and Show everyone can't drift into
-        showing different facts about the same animal.
+        Two callers, differing in two ways. `large` gives the photo the full
+        width instead of the corner. `with_stats` decides whether the feeding
+        record is on it at all — About is a record of a pet, Show everyone is an
+        introduction to one, and a league table of who fed them most is not part
+        of an introduction.
+
+        Built once rather than twice so the two cards can't drift into
+        disagreeing about the same animal.
         """
-        stats = await asyncio.to_thread(pet_stats, guild.id, record.pet_id)
-        by: dict[str, Any] = stats.get("by", {})
         owner = guild.get_member(record.owner_id)
 
         embed = discord.Embed(
@@ -2947,33 +2950,51 @@ class PetCare(commands.Cog):
             description=f"{owner.display_name if owner else 'someone who left'}'s",
             colour=EMBED_COLOUR,
         )
-        embed.add_field(name="Treats eaten", value=str(stats.get("total", 0)))
 
-        fav_id = _favourite_id(by)
-        if fav_id:
-            fav = guild.get_member(int(fav_id))
+        if with_stats:
+            # The ledger is only read when something on the card needs it.
+            stats = await asyncio.to_thread(pet_stats, guild.id, record.pet_id)
+            by: dict[str, Any] = stats.get("by", {})
+
+            embed.add_field(name="Treats eaten", value=str(stats.get("total", 0)))
+
+            fav_id = _favourite_id(by)
+            if fav_id:
+                fav = guild.get_member(int(fav_id))
+                embed.add_field(
+                    name="Favourite human",
+                    value=f"{fav.display_name if fav else 'someone who left'} ({by[fav_id]})",
+                )
+            else:
+                embed.add_field(name="Favourite human", value="nobody yet")
+
+            days = _days_since(stats.get("last_fed") or record.added)
             embed.add_field(
-                name="Favourite human",
-                value=f"{fav.display_name if fav else 'someone who left'} ({by[fav_id]})",
+                name="Last fed",
+                value="never" if days is None else "today" if days == 0 else f"{days} days ago",
             )
-        else:
-            embed.add_field(name="Favourite human", value="nobody yet")
 
-        days = _days_since(stats.get("last_fed") or record.added)
-        embed.add_field(
-            name="Last fed",
-            value="never" if days is None else "today" if days == 0 else f"{days} days ago",
-        )
-
-        ranked = sorted(by.items(), key=lambda kv: (-int(kv[1]), kv[0]))[:5]
-        if ranked:
-            rows = []
-            for uid, count in ranked:
-                m = guild.get_member(int(uid))
-                rows.append(f"**{count}** — {m.display_name if m else 'someone who left'}")
-            embed.add_field(name="Fed by", value="\n".join(rows), inline=False)
+            ranked = sorted(by.items(), key=lambda kv: (-int(kv[1]), kv[0]))[:5]
+            if ranked:
+                rows = []
+                for uid, count in ranked:
+                    m = guild.get_member(int(uid))
+                    rows.append(f"**{count}** — {m.display_name if m else 'someone who left'}")
+                embed.add_field(name="Fed by", value="\n".join(rows), inline=False)
 
         pet_profile.apply(embed, record)
+
+        # With the stats gone, a pet whose owner never filled anything in would
+        # be a name and a photo and nothing else — which reads as broken rather
+        # than as empty. Say which it is.
+        if not with_stats and not record.has_profile:
+            embed.add_field(
+                name="No bio yet",
+                value=(
+                    "Their owner can add one from 🐾 **Manage my pets** → ✏️ Edit bio."
+                ),
+                inline=False,
+            )
 
         file = self._thumb(record)
         if file is not None:
@@ -3029,7 +3050,12 @@ class PetCare(commands.Cog):
         if record is None:
             return await self._deny(interaction, "❌ That pet isn't registered any more.")
 
-        embed, file = await self._pet_card(guild, record, large=True)
+        # Bio only. This card is an introduction to a pet, not its feeding
+        # record — the treat counts and the league table of who fed them most
+        # live on the About card and the board, where they're the point.
+        embed, file = await self._pet_card(
+            guild, record, large=True, with_stats=False
+        )
         # Says who put it there, since it arrives in the channel unprompted and
         # is otherwise a card that nobody appears to have asked for.
         embed.set_footer(text=f"shown by {interaction.user.display_name}")
