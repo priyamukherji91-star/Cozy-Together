@@ -979,6 +979,15 @@ class DexView(discord.ui.View):
         jump.callback = self._jump
         self.add_item(jump)
 
+        # The dex is private, so this is the only way a pet you are looking at
+        # reaches anybody else. Primary, because it is the one thing on this
+        # screen that leaves a mark on the channel.
+        show = discord.ui.Button(
+            label="📢 Show everyone", style=discord.ButtonStyle.primary, row=2
+        )
+        show.callback = self._show
+        self.add_item(show)
+
         index = discord.ui.Button(
             label="📋 All pets", style=discord.ButtonStyle.secondary, row=2
         )
@@ -990,6 +999,9 @@ class DexView(discord.ui.View):
 
     async def _next(self, interaction: discord.Interaction) -> None:
         await self.cog.open_dex(interaction, self.page + 1, edit=True)
+
+    async def _show(self, interaction: discord.Interaction) -> None:
+        await self.cog.post_bio(interaction, self.pet_id)
 
     async def _index(self, interaction: discord.Interaction) -> None:
         await self.cog.open_dex_index(interaction, self.page // DEX_INDEX_PAGE)
@@ -2916,19 +2928,19 @@ class PetCare(commands.Cog):
         await interaction.response.send_message(embed=embed)
         self._after_post()
 
-    async def send_about(self, interaction: discord.Interaction, pet_id: str) -> None:
-        if interaction.guild is None:
-            return
-        if self._too_fast(interaction.user.id):
-            return await self._deny(interaction, "⏳ Slow down.")
+    async def _pet_card(
+        self, guild: discord.Guild, record: pet_registry.Pet, *, large: bool
+    ) -> tuple[discord.Embed, discord.File | None]:
+        """One pet's public card: its record, its profile, and its photo.
 
-        record = await self._resolve(interaction.guild, pet_id)
-        if record is None:
-            return await self._deny(interaction, "❌ That pet isn't registered any more.")
-
-        stats = await asyncio.to_thread(pet_stats, interaction.guild.id, record.pet_id)
+        `large` is the only difference between the two things that post this —
+        the photo goes full width instead of into the corner. Built once rather
+        than twice so the About button and Show everyone can't drift into
+        showing different facts about the same animal.
+        """
+        stats = await asyncio.to_thread(pet_stats, guild.id, record.pet_id)
         by: dict[str, Any] = stats.get("by", {})
-        owner = interaction.guild.get_member(record.owner_id)
+        owner = guild.get_member(record.owner_id)
 
         embed = discord.Embed(
             title=f"🐾 {record.name}",
@@ -2939,7 +2951,7 @@ class PetCare(commands.Cog):
 
         fav_id = _favourite_id(by)
         if fav_id:
-            fav = interaction.guild.get_member(int(fav_id))
+            fav = guild.get_member(int(fav_id))
             embed.add_field(
                 name="Favourite human",
                 value=f"{fav.display_name if fav else 'someone who left'} ({by[fav_id]})",
@@ -2957,15 +2969,31 @@ class PetCare(commands.Cog):
         if ranked:
             rows = []
             for uid, count in ranked:
-                m = interaction.guild.get_member(int(uid))
+                m = guild.get_member(int(uid))
                 rows.append(f"**{count}** — {m.display_name if m else 'someone who left'}")
             embed.add_field(name="Fed by", value="\n".join(rows), inline=False)
 
+        pet_profile.apply(embed, record)
+
         file = self._thumb(record)
         if file is not None:
-            embed.set_thumbnail(url="attachment://pet.png")
+            if large:
+                embed.set_image(url="attachment://pet.png")
+            else:
+                embed.set_thumbnail(url="attachment://pet.png")
+        return embed, file
 
-        pet_profile.apply(embed, record)
+    async def send_about(self, interaction: discord.Interaction, pet_id: str) -> None:
+        if interaction.guild is None:
+            return
+        if self._too_fast(interaction.user.id):
+            return await self._deny(interaction, "⏳ Slow down.")
+
+        record = await self._resolve(interaction.guild, pet_id)
+        if record is None:
+            return await self._deny(interaction, "❌ That pet isn't registered any more.")
+
+        embed, file = await self._pet_card(interaction.guild, record, large=False)
 
         view = discord.ui.View(timeout=None)
         # No edit button. This card is public and shows anybody's pet, so the
@@ -2974,6 +3002,44 @@ class PetCare(commands.Cog):
         # lists your own.
         view.add_item(DexButton(0))
 
+        await interaction.response.send_message(
+            embed=embed, view=view, file=file or discord.utils.MISSING
+        )
+        self._after_post()
+
+    async def post_bio(self, interaction: discord.Interaction, pet_id: str) -> None:
+        """Put the dex entry you're looking at into the channel, for everyone.
+
+        The dex has to be ephemeral — it marks which pets *you* have fed, and one
+        shared message cannot show a different tick to each reader — so a pet you
+        want to show somebody is otherwise stuck behind your own private message.
+        This is the way out: the same card, public, with the photo given the full
+        width rather than the corner.
+
+        The ephemeral dex is left open behind it, so showing one pet doesn't cost
+        you the page you were on.
+        """
+        guild = interaction.guild
+        if guild is None:
+            return
+        if self._too_fast(interaction.user.id):
+            return await self._deny(interaction, "⏳ Slow down.")
+
+        record = await asyncio.to_thread(pet_registry.get_pet, guild.id, pet_id)
+        if record is None:
+            return await self._deny(interaction, "❌ That pet isn't registered any more.")
+
+        embed, file = await self._pet_card(guild, record, large=True)
+        # Says who put it there, since it arrives in the channel unprompted and
+        # is otherwise a card that nobody appears to have asked for.
+        embed.set_footer(text=f"shown by {interaction.user.display_name}")
+
+        view = discord.ui.View(timeout=None)
+        view.add_item(DexButton(0))
+
+        # A new message rather than an edit: this interaction came from the
+        # ephemeral dex, and answering it publicly is what puts the card in the
+        # channel while leaving the dex where it was.
         await interaction.response.send_message(
             embed=embed, view=view, file=file or discord.utils.MISSING
         )
