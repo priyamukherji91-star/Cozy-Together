@@ -1551,11 +1551,9 @@ class PetCare(commands.Cog):
                 "Nobody has registered a pet yet. `/pet add` fixes that."
             ),
         )
-        channel = guild.get_channel(FEED_CHANNEL_ID)
-        embed.set_author(
-            name=f"{guild.name} · {channel.name}" if channel else guild.name,
-            icon_url=guild.icon.url if guild.icon else None,
-        )
+        # No author line. It read "Cozy Together · pet-care" directly above a
+        # title already saying Cozy Together Pets, in a channel you are standing
+        # in — three ways of telling you where you are, stacked.
 
         if entries:
             embed.add_field(
