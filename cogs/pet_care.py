@@ -36,7 +36,7 @@ from zoneinfo import ZoneInfo
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from petcare import pet_profile, pet_registry, pet_treats, storage
 
@@ -94,6 +94,22 @@ CLICK_COOLDOWN = 2.0
 # to find the picture on your phone, short enough that a forgotten prompt isn't
 # still armed when you post something else entirely.
 PHOTO_WAIT_SECONDS = 120
+
+# The evening nudge. UK time, because that's where everyone is — note this is
+# NOT the same clock the treats run on. Allowances reset at midnight in
+# TIMEZONE (Brussels), which is 23:00 here, so 21:00 lands two hours out. The
+# countdown in the post is rendered from the real reset instant rather than
+# written down, so it stays true whichever way the clocks drift.
+NUDGE_TZ = "Europe/London"
+NUDGE_HOUR = 21
+NUDGE_MINUTE = 0
+# The loop ticks every minute; the window covers a tick that arrives late or a
+# restart that lands just after the hour.
+NUDGE_WINDOW_MINUTES = 10
+NUDGE_PATH = pet_registry.DATA_DIR / "pet_nudge.json"
+# Remembering the last few lines keeps the same one from landing two nights in a
+# row, the way the reset announcements already do it.
+NUDGE_RECENT_KEEP = 8
 
 # Sweep the click record once it passes this many members. Comfortably above any
 # plausible number of people clicking within one cooldown, so the sweep is rare.
@@ -200,6 +216,63 @@ PLAY_LINES: tuple[str, ...] = (
     "{pet} has the {toy} and the undivided attention. I had neither, all week.",
     "Enjoy the {toy}, {pet}. I'll enjoy remembering this.",
 )
+
+# ── the evening nudge ─────────────────────────────────────────────────────────
+# The pet speaks, not Mittens. A sincere animal saying it waited by the bowl
+# lands harder than the cat being bitter about it, and the bitterness still gets
+# the last word in the footer.
+#
+# No gendered pronouns anywhere in here: a pet has a name, a species and a photo,
+# and nothing that says whether it's a he or a she. Guessing from the photo is
+# not something a bot gets to do.
+NUDGE_LINES: tuple[str, ...] = (
+    "I am waiting you know? Wtf my bowl is empty?????",
+    "Either you feed me or it's the furniture that's gonna suffer, just saying.",
+    "My bowl??? I am checking but there's nothing, hello??",
+    "Not one single person. Not ONE. I'm normal about it though.",
+    "I'm not mad, I'm just gonna sit here and stare at you. All night. Hope that's fine.",
+    "Everyone's online. Nobody's feeding me. Make it make sense.",
+    "Genuinely so rude. I've done nothing but be perfect all day.",
+    "Ok so we're just not eating today?? Cool. Cool cool cool.",
+    "I've been patient for HOURS. That's like a year for me. Feed me.",
+    "The bowl is empty and honestly? I'm taking it personally.",
+    "Somebody walked past me twice. TWICE. And did nothing.",
+    "This is a hostage situation and I am the hostage.",
+)
+
+# Only offered when the profile has a favourite treat to name. There is
+# deliberately no equivalent for the favourite toy: this post is about an empty
+# bowl, and a line about a toy lets a hungry animal change the subject.
+NUDGE_TREAT_LINES: tuple[str, ...] = (
+    "Where is my {treat} ????",
+    "I was PROMISED {treat}. By who? Doesn't matter. Where is it.",
+    "{treat}. Now. I'm not doing this all night.",
+    "Everyone knows I like {treat}. It's my whole thing. So where is it??",
+    "No {treat} today?? In THIS economy?? Unbelievable.",
+)
+
+# Two days or more. These get first refusal, because a pet nobody has fed since
+# Tuesday is the whole reason the post exists.
+NUDGE_DAYS_LINES: tuple[str, ...] = (
+    "Imagine not feeding me for {n} days... actually toxic.",
+    "{n} days. {n}. I'm keeping receipts.",
+    "It's been {n} days and nobody has said anything. Wild behaviour honestly.",
+    "{n} whole days. I could have been ANYWHERE else.",
+    "Day {n} of being ignored. Starting to think it's on purpose.",
+    "{n} days without food and you all just carry on?? Insane.",
+)
+
+# Mittens, in the footer, refusing to be moved by any of it.
+NUDGE_ASIDES: tuple[str, ...] = (
+    "they've been like this all day.",
+    "I'd have fed them myself. No thumbs.",
+    "don't look at me. I'm a cat.",
+    "they asked me to pass this on. Nobody asked me.",
+    "I'm only the messenger. I'm also the one who noticed.",
+    "that's the third time they've mentioned it. To me. Not to you.",
+    "I have my own problems. This is now one of them.",
+)
+
 
 # One line for the whole selection, in place of the same joke six times over.
 MULTI_FEED_LINES: tuple[str, ...] = (
@@ -830,6 +903,49 @@ def hungriest(
         out.append((p, _days_since(raw.get("last_fed") or p.added)))
     out.sort(key=lambda pair: (-(pair[1] if pair[1] is not None else -1), pair[0].name.casefold()))
     return out
+
+
+# ──────────────────────────────────────────────────────────────
+# The evening nudge
+# ──────────────────────────────────────────────────────────────
+def _nudge_state() -> dict[str, Any]:
+    data = storage.load_json(NUDGE_PATH, default={})
+    return data if isinstance(data, dict) else {}
+
+
+def _nudge_line(pet: pet_registry.Pet, days: int | None, recent: list[str]) -> str:
+    """What this pet says tonight.
+
+    A pet that hasn't eaten in days says so — that's the sharpest thing it has.
+    Otherwise it asks for its favourite treat by name where the profile gives
+    one, and falls back to plain outrage where it doesn't. Lines used in the
+    last few nights are set aside first, and only ignored if that would leave
+    nothing to say.
+    """
+    pool: list[str] = []
+    if days is not None and days >= 2:
+        pool += [line.format(n=days) for line in NUDGE_DAYS_LINES]
+    if pet.treat:
+        pool += [line.format(treat=pet.treat) for line in NUDGE_TREAT_LINES]
+    pool += list(NUDGE_LINES)
+
+    fresh = [line for line in pool if line not in recent]
+    return random.choice(fresh or pool)
+
+
+def _nudge_names(waiting: list[tuple[pet_registry.Pet, int | None]]) -> str:
+    """The pets going without, minus the one already doing the talking."""
+    others = [pet.name for pet, _ in waiting[1:]]
+    if not others:
+        return ""
+    if len(others) == 1:
+        return f"**{others[0]}** hasn't eaten either."
+    shown = [f"**{name}**" for name in others[:4]]
+    if len(others) > 4:
+        tail = ", ".join(shown) + f" and {len(others) - 4} more"
+    else:
+        tail = ", ".join(shown[:-1]) + f" and {shown[-1]}"
+    return f"Nor have {tail}."
 
 
 # ──────────────────────────────────────────────────────────────
@@ -1550,8 +1666,10 @@ class PetCare(commands.Cog):
         # that. This is always called from inside the loop, so it is safe either
         # way round.
         asyncio.create_task(self._boot())
+        self.nudge_loop.start()
 
     async def cog_unload(self) -> None:
+        self.nudge_loop.cancel()
         if self._repost and not self._repost.done():
             self._repost.cancel()
         if self._ctx_menu is not None:
@@ -1837,7 +1955,164 @@ class PetCare(commands.Cog):
         """Call after the cog posts something public, in place of on_message."""
         self._schedule_repost()
 
+    # ── the evening nudge ─────────────────────────────────────────────────────
+
+    async def _nudge_embed(
+        self, guild: discord.Guild
+    ) -> tuple[discord.Embed, discord.File | None] | None:
+        """Tonight's post, or None when there's nothing worth saying.
+
+        Returning None is most of the point. A post every evening regardless
+        would be noise inside a week; one that only appears when an animal has
+        actually gone without keeps meaning something.
+        """
+        pets = await asyncio.to_thread(pet_registry.all_pets, guild.id)
+        if not pets:
+            return None
+
+        entries = await asyncio.to_thread(hungriest, guild.id, pets)
+        # The same rule the panel uses: nobody has fed it today.
+        waiting = [(p, d) for p, d in entries if d is None or d >= 1]
+        if not waiting:
+            return None
+
+        speaker, days = waiting[0]
+        recent = [str(x) for x in (_nudge_state().get("recent") or [])]
+        line = await asyncio.to_thread(_nudge_line, speaker, days, recent)
+        given = await asyncio.to_thread(treats_given_today, guild.id)
+
+        embed = discord.Embed(
+            title=None,
+            colour=COLOUR_HUNGRY,
+            description=f"*{line}*",
+        )
+        embed.set_author(name=speaker.name)
+
+        tail = _nudge_names(waiting)
+        embed.add_field(
+            name="​",
+            value=(
+                (tail + "\n" if tail else "")
+                + f"**{given}** treat{'' if given == 1 else 's'} went out today. "
+                f"Everything resets <t:{_next_reset_unix()}:R>."
+            ),
+            inline=False,
+        )
+        embed.set_footer(text=f"— {random.choice(NUDGE_ASIDES)} Mittens")
+
+        # The pet's own face in the author slot, from the bytes on disk. Same
+        # attachment trick the manage card uses.
+        file = self._thumb(speaker)
+        if file is not None:
+            embed.set_author(name=speaker.name, icon_url="attachment://pet.png")
+
+        # Remembered whether or not the send succeeds: a line that nearly went
+        # out is still one the next night shouldn't reach for first.
+        storage.save_json(
+            NUDGE_PATH,
+            {
+                **_nudge_state(),
+                "recent": ([*recent, line])[-NUDGE_RECENT_KEEP:],
+            },
+        )
+        return embed, file
+
+    def _in_nudge_window(self, now: datetime.datetime) -> bool:
+        target = now.replace(
+            hour=NUDGE_HOUR, minute=NUDGE_MINUTE, second=0, microsecond=0
+        )
+        delta = now - target
+        return datetime.timedelta(0) <= delta < datetime.timedelta(
+            minutes=NUDGE_WINDOW_MINUTES
+        )
+
+    @tasks.loop(minutes=1)
+    async def nudge_loop(self) -> None:
+        now = datetime.datetime.now(ZoneInfo(NUDGE_TZ))
+        if not self._in_nudge_window(now):
+            return
+
+        today = now.date().isoformat()
+        state = _nudge_state()
+        if state.get("last") == today:
+            return
+
+        guild = self.bot.get_guild(GUILD_ID)
+        channel = self._channel()
+        if guild is None or channel is None:
+            return
+
+        built = await self._nudge_embed(guild)
+        # Written before the send, and on the quiet nights too: a night with
+        # nothing to say is still a night that has had its go, and a failed send
+        # must not turn into a retry every minute for the rest of the window.
+        storage.save_json(NUDGE_PATH, {**_nudge_state(), "last": today})
+        if built is None:
+            return
+
+        embed, file = built
+        try:
+            await channel.send(embed=embed, file=file) if file else await channel.send(
+                embed=embed
+            )
+        except discord.HTTPException:
+            log.exception("[pets] could not post the evening nudge")
+            return
+        self._after_post()
+
+    @nudge_loop.before_loop
+    async def _before_nudge(self) -> None:
+        await self.bot.wait_until_ready()
+
     # ── the two commands that aren't registration, and they're for you ────────
+
+    @app_commands.command(
+        name="petnudge", description="Preview tonight's hungry-pet post 🍖"
+    )
+    @app_commands.describe(
+        post="Actually send it to the pet channel instead of showing it to you only."
+    )
+    @admin_only()
+    async def petnudge_cmd(
+        self, interaction: discord.Interaction, post: bool = False
+    ) -> None:
+        """Fire the evening post by hand, for looking at it.
+
+        Defaults to showing it to the caller alone, so the lines can be rolled
+        through as many times as you like without the pet channel filling up
+        with the same animal complaining. It also ignores the once-a-night
+        guard, and says so out loud on a night when every pet has eaten —
+        silence is right for the real thing and useless for a test.
+        """
+        guild = interaction.guild
+        if guild is None:
+            return
+        await interaction.response.defer(ephemeral=not post)
+
+        built = await self._nudge_embed(guild)
+        if built is None:
+            return await interaction.followup.send(
+                "🍖 Nothing to say tonight — every pet has been fed, or none are "
+                "registered. The real post stays quiet on nights like this.",
+                ephemeral=True,
+            )
+
+        embed, file = built
+        if not post:
+            return await interaction.followup.send(
+                embed=embed, files=[file] if file else [], ephemeral=True
+            )
+
+        channel = self._channel()
+        if channel is None:
+            return await interaction.followup.send(
+                "❌ I can't reach the pet channel.", ephemeral=True
+            )
+        await channel.send(embed=embed, file=file) if file else await channel.send(
+            embed=embed
+        )
+        self._after_post()
+        await interaction.followup.send(f"🍖 Posted in {channel.mention}.", ephemeral=True)
 
     @app_commands.command(name="petpanel", description="Post the pet panel again 🐾")
     @admin_only()
