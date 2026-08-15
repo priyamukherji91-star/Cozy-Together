@@ -14,6 +14,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from cogs.member_cards import MEMBER_CARD_CHANNEL_ID as BOT_COMMAND_CHANNEL_ID
 from common import storage
 
 LOG = logging.getLogger(__name__)
@@ -24,7 +25,15 @@ LOG = logging.getLogger(__name__)
 GUILD_ID = 1425974791516586045
 
 ANNOUNCEMENT_CHANNEL_ID = 1437582015925850239
-MEMBER_COMMAND_CHANNEL_ID = 1425974792745648252
+
+# This was one constant called MEMBER_COMMAND_CHANNEL_ID, pointing at #general.
+# The name read as "wherever members run commands", which is not what it was —
+# #bot-commands is where !register and !whoami live, and where /help sends
+# people. /birthday set now takes either, so the help text can't send anyone
+# somewhere the command refuses them.
+GENERAL_CHANNEL_ID = 1425974792745648252
+MEMBER_COMMAND_CHANNEL_IDS = frozenset({GENERAL_CHANNEL_ID, BOT_COMMAND_CHANNEL_ID})
+
 ADMIN_COMMAND_CHANNEL_ID = 1429796227192459264
 
 # Fixed GMT+1, exactly as requested: 9am GMT+1 every day.
@@ -201,7 +210,7 @@ class BirthdayCog(commands.Cog):
     # Helpers
     # ──────────────────────────────────────────────────────────────
     def _is_member_channel(self, interaction: discord.Interaction) -> bool:
-        return bool(interaction.channel and interaction.channel.id == MEMBER_COMMAND_CHANNEL_ID)
+        return bool(interaction.channel and interaction.channel.id in MEMBER_COMMAND_CHANNEL_IDS)
 
     def _is_admin_channel(self, interaction: discord.Interaction) -> bool:
         return bool(interaction.channel and interaction.channel.id == ADMIN_COMMAND_CHANNEL_ID)
@@ -212,7 +221,8 @@ class BirthdayCog(commands.Cog):
 
     async def _deny_member_channel(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_message(
-            f"Use this in <#{MEMBER_COMMAND_CHANNEL_ID}>. Mittens is very strict and deeply annoying.",
+            f"Use this in <#{BOT_COMMAND_CHANNEL_ID}> or <#{GENERAL_CHANNEL_ID}>. "
+            "Mittens is very strict and deeply annoying.",
             ephemeral=True,
         )
 
