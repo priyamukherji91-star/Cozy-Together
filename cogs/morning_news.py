@@ -21,6 +21,8 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from openai import OpenAI
 
+from common import storage
+
 LOG = logging.getLogger(__name__)
 
 # The renderer deliberately lives outside cogs/ — bot.py auto-loads cogs/*.py as
@@ -62,8 +64,7 @@ TEST_ALLOWED_ROLE_IDS = {
     1425977436859797595,
 }
 
-DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
-STATE_PATH = DATA_DIR / "morning_news_state.json"
+STATE_PATH = storage.DATA_DIR / "morning_news_state.json"
 
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4")
 
@@ -154,35 +155,37 @@ class MorningNewsState:
 
     @classmethod
     def load(cls) -> "MorningNewsState":
-        if STATE_PATH.exists():
-            try:
-                data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-                # Tolerate old state files that lacked the ID lists
-                raw_live = [int(x) for x in data.get("used_live_menace_message_ids", []) if str(x).isdigit()]
-                raw_test = [int(x) for x in data.get("used_test_menace_message_ids", []) if str(x).isdigit()]
-                keys_live = [str(x) for x in data.get("used_live_menace_image_keys", [])]
-                keys_test = [str(x) for x in data.get("used_test_menace_image_keys", [])]
-                return cls(
-                    last_live_post_date=data.get("last_live_post_date"),
-                    used_live_menace_message_ids=raw_live,
-                    used_test_menace_message_ids=raw_test,
-                    used_live_menace_image_keys=keys_live,
-                    used_test_menace_image_keys=keys_test,
-                )
-            except Exception:
-                return cls()
-        return cls()
+        data = storage.load_json(STATE_PATH, default=None)
+        if not isinstance(data, dict):
+            return cls()
+        try:
+            # Tolerate old state files that lacked the ID lists
+            raw_live = [int(x) for x in data.get("used_live_menace_message_ids", []) if str(x).isdigit()]
+            raw_test = [int(x) for x in data.get("used_test_menace_message_ids", []) if str(x).isdigit()]
+            keys_live = [str(x) for x in data.get("used_live_menace_image_keys", [])]
+            keys_test = [str(x) for x in data.get("used_test_menace_image_keys", [])]
+            return cls(
+                last_live_post_date=data.get("last_live_post_date"),
+                used_live_menace_message_ids=raw_live,
+                used_test_menace_message_ids=raw_test,
+                used_live_menace_image_keys=keys_live,
+                used_test_menace_image_keys=keys_test,
+            )
+        except Exception:
+            LOG.exception("Unreadable morning news state; starting fresh.")
+            return cls()
 
     def save(self) -> None:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "last_live_post_date": self.last_live_post_date,
-            "used_live_menace_message_ids": self.used_live_menace_message_ids[-MAX_USED_MENACE_IDS:],
-            "used_test_menace_message_ids": self.used_test_menace_message_ids[-MAX_USED_MENACE_IDS:],
-            "used_live_menace_image_keys": self.used_live_menace_image_keys[-MAX_USED_MENACE_IDS:],
-            "used_test_menace_image_keys": self.used_test_menace_image_keys[-MAX_USED_MENACE_IDS:],
-        }
-        STATE_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        storage.save_json(
+            STATE_PATH,
+            {
+                "last_live_post_date": self.last_live_post_date,
+                "used_live_menace_message_ids": self.used_live_menace_message_ids[-MAX_USED_MENACE_IDS:],
+                "used_test_menace_message_ids": self.used_test_menace_message_ids[-MAX_USED_MENACE_IDS:],
+                "used_live_menace_image_keys": self.used_live_menace_image_keys[-MAX_USED_MENACE_IDS:],
+                "used_test_menace_image_keys": self.used_test_menace_image_keys[-MAX_USED_MENACE_IDS:],
+            },
+        )
 
 
 @dataclass

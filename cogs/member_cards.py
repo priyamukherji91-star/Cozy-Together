@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
-import json
 import logging
-import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,14 +14,14 @@ from bs4 import BeautifulSoup
 from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
+from common import storage
+
 LOG = logging.getLogger(__name__)
 
 # Channel where !register / !whoami may be used and where cards are posted.
 MEMBER_CARD_CHANNEL_ID = 1436115021066408016
 
-# Railway Volume Storage (matches birthday.py / morning_news.py convention).
-DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
-DATA_PATH = DATA_DIR / "member_cards.json"
+DATA_PATH = storage.DATA_DIR / "member_cards.json"
 
 FONT_DIR  = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 LODESTONE = "https://eu.finalfantasyxiv.com/lodestone/character"
@@ -96,14 +94,12 @@ def _norm(s: str) -> str:
 
 
 def _load() -> dict:
-    if DATA_PATH.exists():
-        return json.loads(DATA_PATH.read_text(encoding="utf-8"))
-    return {}
+    data = storage.load_json(DATA_PATH, default={})
+    return data if isinstance(data, dict) else {}
 
 
 def _save(data: dict) -> None:
-    DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
-    DATA_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    storage.save_json(DATA_PATH, data)
 
 
 def _t(soup: BeautifulSoup, sel: str, default: str = "?") -> str:

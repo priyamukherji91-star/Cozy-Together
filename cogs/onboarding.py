@@ -1,14 +1,14 @@
 # cogs/onboarding.py
 # -*- coding: utf-8 -*-
 
-import json
-from dataclasses import dataclass, asdict
-from pathlib import Path
+from dataclasses import dataclass, asdict, fields
 from typing import Optional
 
 import discord
 from discord.ext import commands
 from discord import app_commands
+
+from common import storage
 
 # ── IDs ───────────────────────────────────────────────────────────
 GUILD_ID = 1425974791516586045
@@ -61,9 +61,10 @@ ACTIVITY_ROLE_ENTRIES = [
 _ACTIVITY_ROLE_MAP = {name: role_id for name, role_id in ACTIVITY_ROLE_ENTRIES}
 
 # ── Persistence ───────────────────────────────────────────────────
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
-CONFIG_PATH = DATA_DIR / "onboarding_config.json"
+# This used to be a relative Path("data"), which is inside the container rather
+# than on the volume — so every deploy forgot which messages carried the role
+# reactions, and the posts went inert until they were set up again.
+CONFIG_PATH = storage.DATA_DIR / "onboarding_config.json"
 
 
 @dataclass
@@ -75,16 +76,15 @@ class RoleMessageConfig:
 
     @classmethod
     def load(cls):
-        if CONFIG_PATH.exists():
-            try:
-                raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-                return cls(**raw)
-            except Exception:
-                return cls()
-        return cls()
+        raw = storage.load_json(CONFIG_PATH, default=None)
+        if not isinstance(raw, dict):
+            return cls()
+        # Ignore keys we no longer know about rather than blowing up on them.
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in raw.items() if k in known})
 
     def save(self):
-        CONFIG_PATH.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        storage.save_json(CONFIG_PATH, asdict(self))
 
 
 # ── Shared role helpers ───────────────────────────────────────────

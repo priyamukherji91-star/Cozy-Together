@@ -35,17 +35,16 @@ from __future__ import annotations
 
 import asyncio
 import io
-import json
 import logging
-import os
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Dict, List, Optional
 
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from discord.utils import MISSING
+
+from common import storage
 
 try:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # py3.9+
@@ -75,8 +74,7 @@ UK_TZ_NAME = "Europe/London"
 # One reminder, fired 1 hour before the event starts. Restart-safe: the loop re-reads
 # events from Discord each tick and records what it has sent in a JSON ledger on the
 # Railway volume (same DATA_DIR the other cogs use), keyed by "event_id:offset_seconds".
-DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
-STATE_PATH = DATA_DIR / "events_reminders.json"
+STATE_PATH = storage.DATA_DIR / "events_reminders.json"
 
 REMINDER_OFFSET = timedelta(hours=1)
 REMINDER_OFFSET_KEY = str(int(REMINDER_OFFSET.total_seconds()))  # "3600"
@@ -614,33 +612,17 @@ class EventsCog(commands.Cog):
         return loc if loc.startswith("https://discord.com/channels/") else None
 
     # ── JSON ledger on the Railway volume ──────────────────────
-    @staticmethod
-    def _ensure_dir() -> None:
-        try:
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            LOG.exception("Could not create events data directory: %s", DATA_DIR)
-
     def _load_state(self) -> Dict[str, dict]:
-        self._ensure_dir()
-        if not STATE_PATH.exists():
+        raw = storage.load_json(STATE_PATH, default=None)
+        if not isinstance(raw, dict):
             return {"sent": {}, "threads": {}}
-        try:
-            raw = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-            return {
-                "sent": dict(raw.get("sent", {})),
-                "threads": dict(raw.get("threads", {})),
-            }
-        except Exception:
-            LOG.exception("Failed to load events reminder state; starting empty.")
-            return {"sent": {}, "threads": {}}
+        return {
+            "sent": dict(raw.get("sent", {})),
+            "threads": dict(raw.get("threads", {})),
+        }
 
     def _save_state(self, state: Dict[str, dict]) -> None:
-        self._ensure_dir()
-        try:
-            STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
-        except Exception:
-            LOG.exception("Failed to save events reminder state")
+        storage.save_json(STATE_PATH, state)
 
 
 async def setup(bot: commands.Bot) -> None:

@@ -12,15 +12,13 @@ hardcoded, so this keeps working without anyone touching it.
 Discord rate-limits avatar changes hard, so we:
   - only check once an hour,
   - only call the API when the occasion actually changed,
-  - remember the last applied occasion in ./data/avatar_state.json.
+  - remember the last applied occasion in avatar_state.json on the volume.
 """
 from __future__ import annotations
 
 import asyncio
 import io
-import json
 import logging
-import os
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
@@ -31,11 +29,13 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from PIL import Image
 
+from common import storage
+
 log = logging.getLogger("cozy.seasonal_avatar")
 
 ROOT = Path(__file__).resolve().parent.parent
 AVATAR_DIR = ROOT / "assets" / "avatars"
-STATE_FILE = Path(os.getenv("DATA_DIR", ROOT / "data")) / "avatar_state.json"
+STATE_FILE = storage.DATA_DIR / "avatar_state.json"
 
 TIMEZONE = ZoneInfo("Europe/Brussels")
 CHECK_MINUTES = 60
@@ -213,27 +213,18 @@ class SeasonalAvatar(commands.Cog):
     # ---------------- State ----------------
 
     def _read_state(self) -> dict:
-        try:
-            data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
-        except (OSError, ValueError):
-            return {}
+        data = storage.load_json(STATE_FILE, default={})
+        return data if isinstance(data, dict) else {}
 
     def _write_state(self, key: str, override: Optional[str]) -> None:
-        try:
-            STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            STATE_FILE.write_text(
-                json.dumps(
-                    {
-                        "occasion": key,
-                        "override": override,
-                        "updated": datetime.now(TIMEZONE).isoformat(),
-                    }
-                ),
-                encoding="utf-8",
-            )
-        except OSError:
-            log.exception("Could not persist avatar state to %s", STATE_FILE)
+        storage.save_json(
+            STATE_FILE,
+            {
+                "occasion": key,
+                "override": override,
+                "updated": datetime.now(TIMEZONE).isoformat(),
+            },
+        )
 
     # ---------------- Core ----------------
 

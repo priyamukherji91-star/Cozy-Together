@@ -2,12 +2,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import json
 import logging
-import os
 import random
 import re
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, Optional
@@ -15,6 +13,8 @@ from typing import Dict, Optional
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
+
+from common import storage
 
 LOG = logging.getLogger(__name__)
 
@@ -33,11 +33,8 @@ POST_HOUR = 9
 POST_MINUTE = 0
 POST_WINDOW_MINUTES = 10
 
-# Railway Volume Storage. Railway/Linux paths are case-sensitive.
-# Default to /data, but allow override with DATA_DIR if your Railway volume uses another mount path.
-DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
-BIRTHDAY_PATH = DATA_DIR / "birthdays.json"
-STATE_PATH = DATA_DIR / "birthday_state.json"
+BIRTHDAY_PATH = storage.DATA_DIR / "birthdays.json"
+STATE_PATH = storage.DATA_DIR / "birthday_state.json"
 
 BDAY_WISHES = [
     "Everyone gather. {user} has survived another year, somehow. Happy birthday. 🐾",
@@ -48,14 +45,6 @@ BDAY_WISHES = [
 ]
 
 DATE_RE = re.compile(r"^(?P<day>\d{1,2})/(?P<month>\d{1,2})$")
-
-
-def _ensure_data_dir() -> None:
-    try:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        LOG.exception("Could not create birthday data directory: %s", DATA_DIR)
-        raise
 
 
 def _today_key(now: Optional[datetime] = None) -> str:
@@ -106,19 +95,14 @@ class BirthdayState:
 
     @classmethod
     def load(cls) -> "BirthdayState":
-        _ensure_data_dir()
-        if not STATE_PATH.exists():
+        raw = storage.load_json(STATE_PATH, default=None)
+        if not isinstance(raw, dict):
             return cls()
-        try:
-            raw = json.loads(STATE_PATH.read_text(encoding="utf-8"))
-            return cls(**raw)
-        except Exception:
-            LOG.exception("Failed to load birthday state; using empty state.")
-            return cls()
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in raw.items() if k in known})
 
     def save(self) -> None:
-        _ensure_data_dir()
-        STATE_PATH.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        storage.save_json(STATE_PATH, asdict(self))
 
 
 class BirthdayStore:
@@ -126,16 +110,7 @@ class BirthdayStore:
         self.path = path
 
     def load(self) -> Dict[str, BirthdayEntry]:
-        _ensure_data_dir()
-        if not self.path.exists():
-            return {}
-
-        try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except Exception:
-            LOG.exception("Failed to read birthday storage; using empty store.")
-            return {}
-
+        raw = storage.load_json(self.path, default=None)
         entries: Dict[str, BirthdayEntry] = {}
 
         # Current format: {"user_id": {"user_id": int, "name": str, "day": "DD", "month": "MM"}}
@@ -156,15 +131,11 @@ class BirthdayStore:
         return entries
 
     def save(self, entries: Dict[str, BirthdayEntry]) -> None:
-        _ensure_data_dir()
         serialised = {
             str(entry.user_id): asdict(entry)
             for entry in sorted(entries.values(), key=lambda e: (e.month, e.day, e.name.lower()))
         }
-        self.path.write_text(
-            json.dumps(serialised, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        storage.save_json(self.path, serialised)
 
     def set_birthday(self, member: discord.Member, day: str, month: str) -> BirthdayEntry:
         entries = self.load()

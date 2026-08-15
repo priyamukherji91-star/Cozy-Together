@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import logging
-import os
 import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone, time as dtime
@@ -12,6 +10,8 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 
+from common import storage
+
 try:
     from zoneinfo import ZoneInfo  # py3.9+
 except Exception:
@@ -20,8 +20,12 @@ except Exception:
 
 LOG = logging.getLogger(__name__)
 
-DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
-STATE_PATH = DATA_DIR / "ffxiv_resets.json"
+STATE_PATH = storage.DATA_DIR / "ffxiv_resets.json"
+
+# This cog used to default to /data while every other one defaulted to
+# /app/data. If DATA_DIR was never set in the environment, the state is still
+# sitting at the old path — read it once, then save to the shared one.
+LEGACY_STATE_PATH = Path("/data/ffxiv_resets.json")
 
 # Cozy: default channel for daily/weekly posts
 DEFAULT_CHANNEL_ID = 1425974792745648252
@@ -132,40 +136,32 @@ class ResetState:
 
     @staticmethod
     def load() -> "ResetState":
-        if not STATE_PATH.exists():
+        raw = storage.load_json(STATE_PATH, default=None)
+        if raw is None and LEGACY_STATE_PATH != STATE_PATH:
+            raw = storage.load_json(LEGACY_STATE_PATH, default=None)
+            if raw is not None:
+                LOG.info("Read FFXIV reset state from the old path %s", LEGACY_STATE_PATH)
+        if not isinstance(raw, dict):
             return ResetState()
-        try:
-            raw = json.loads(STATE_PATH.read_text(encoding="utf-8")) or {}
-            return ResetState(
-                channel_id=raw.get("channel_id"),
-                last_daily_fired_utc_date=raw.get("last_daily_fired_utc_date"),
-                last_weekly_fired_utc_date=raw.get("last_weekly_fired_utc_date"),
-                recent_daily_lines=list(raw.get("recent_daily_lines") or []),
-                recent_weekly_lines=list(raw.get("recent_weekly_lines") or []),
-            )
-        except Exception:
-            LOG.exception("Failed to load %s", STATE_PATH)
-            return ResetState()
+        return ResetState(
+            channel_id=raw.get("channel_id"),
+            last_daily_fired_utc_date=raw.get("last_daily_fired_utc_date"),
+            last_weekly_fired_utc_date=raw.get("last_weekly_fired_utc_date"),
+            recent_daily_lines=list(raw.get("recent_daily_lines") or []),
+            recent_weekly_lines=list(raw.get("recent_weekly_lines") or []),
+        )
 
     def save(self) -> None:
-        try:
-            DATA_DIR.mkdir(parents=True, exist_ok=True)
-            STATE_PATH.write_text(
-                json.dumps(
-                    {
-                        "channel_id": self.channel_id,
-                        "last_daily_fired_utc_date": self.last_daily_fired_utc_date,
-                        "last_weekly_fired_utc_date": self.last_weekly_fired_utc_date,
-                        "recent_daily_lines": self.recent_daily_lines,
-                        "recent_weekly_lines": self.recent_weekly_lines,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-        except Exception:
-            LOG.exception("Failed to save %s", STATE_PATH)
+        storage.save_json(
+            STATE_PATH,
+            {
+                "channel_id": self.channel_id,
+                "last_daily_fired_utc_date": self.last_daily_fired_utc_date,
+                "last_weekly_fired_utc_date": self.last_weekly_fired_utc_date,
+                "recent_daily_lines": self.recent_daily_lines,
+                "recent_weekly_lines": self.recent_weekly_lines,
+            },
+        )
 
 
 def utc_now() -> datetime:
