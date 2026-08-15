@@ -413,6 +413,54 @@ def _add_pet_locked(guild_id: int, owner_id: int, name: str, raw_image: bytes) -
     return Pet(pet_id, guild_id, owner_id, name, filename, guild[pet_id]["added"])
 
 
+def replace_photo(guild_id: int, pet_id: str, owner_id: int, raw_image: bytes) -> Pet:
+    """Give a pet a new face, and change nothing else about them.
+
+    Until this existed the only way to fix a bad photo was to remove the pet and
+    register it again, which also threw away its treat history and whoever had
+    earned the favourite-human crown. Nothing here touches either: the history
+    lives in `pet_treats.json` keyed by `pet_id`, and the filename is derived
+    from `pet_id` too, so overwriting the file is the whole job. The index isn't
+    written at all — no save, so no half-updated entry to undo.
+
+    `added` deliberately stays put as well. Dex numbers are ordered by it, and a
+    new photo is not a new pet.
+    """
+    if len(raw_image) > MAX_UPLOAD_BYTES:
+        raise PetError(TOO_BIG)
+
+    with _WRITE_LOCK:
+        pet = get_pet(guild_id, pet_id)
+        if pet is None:
+            raise PetError("That pet isn't registered any more.")
+        # Owner only, matching the bio and the name. Callers check this too; it
+        # is repeated here because this is the layer that can't be bypassed.
+        if pet.owner_id != owner_id:
+            raise PetError("That's not your pet.")
+
+        image = prepare_image(raw_image)
+
+        # Written alongside and renamed over the top, the same trick the JSON
+        # saves use. Writing into the live file would mean a crash mid-write
+        # leaves a half a PNG and the original is gone — and unlike registration
+        # there is something here worth losing.
+        target = PETS_IMAGE_DIR / pet.filename
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        try:
+            PETS_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+            tmp.write_bytes(image)
+            tmp.replace(target)
+        except Exception as exc:
+            LOG.exception("Could not replace pet image %s", pet.filename)
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise PetError("I couldn't save that photo. Try again in a moment.") from exc
+
+        return pet
+
+
 _RUNS_OF_SPACE = re.compile(r"[^\S\n]+")
 _BLANK_LINES = re.compile(r"\n{2,}")
 

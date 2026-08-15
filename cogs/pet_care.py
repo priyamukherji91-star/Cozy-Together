@@ -90,6 +90,11 @@ REPOST_DEBOUNCE = 3.0
 # their own guard or one person can machine-gun the dropdown.
 CLICK_COOLDOWN = 2.0
 
+# How long the cog waits for a member to post a replacement photo. Long enough
+# to find the picture on your phone, short enough that a forgotten prompt isn't
+# still armed when you post something else entirely.
+PHOTO_WAIT_SECONDS = 120
+
 # Sweep the click record once it passes this many members. Comfortably above any
 # plausible number of people clicking within one cooldown, so the sweep is rare.
 CLICK_SWEEP_AT = 256
@@ -1171,6 +1176,10 @@ class ManagePetView(discord.ui.View):
         edit.callback = self._edit
         self.add_item(edit)
 
+        photo = discord.ui.Button(label="📷 Change photo", style=discord.ButtonStyle.primary)
+        photo.callback = self._photo
+        self.add_item(photo)
+
         rename = discord.ui.Button(label="🏷️ Rename", style=discord.ButtonStyle.secondary)
         rename.callback = self._rename
         self.add_item(rename)
@@ -1185,6 +1194,9 @@ class ManagePetView(discord.ui.View):
 
     async def _edit(self, interaction: discord.Interaction) -> None:
         await self.cog.open_editor(interaction, self.pet_id)
+
+    async def _photo(self, interaction: discord.Interaction) -> None:
+        await self.cog.open_photo_swap(interaction, self.pet_id)
 
     async def _rename(self, interaction: discord.Interaction) -> None:
         await self.cog.open_rename(interaction, self.pet_id)
@@ -1517,6 +1529,8 @@ class PetCare(commands.Cog):
         self._clicks: dict[int, float] = {}
         # user id -> (when it was ticked, pet ids) — see `update_feed_list`.
         self._picked: dict[int, tuple[float, list[str]]] = {}
+        # Members with a photo swap open — see `open_photo_swap`.
+        self._awaiting_photo: set[int] = set()
         self._lock = asyncio.Lock()
         self._last_place = 0.0
 
@@ -2523,6 +2537,99 @@ class PetCare(commands.Cog):
 
     async def open_rename(self, interaction: discord.Interaction, pet_id: str) -> None:
         await self._open_form(interaction, pet_id, pet_profile.name_modal)
+
+    async def open_photo_swap(self, interaction: discord.Interaction, pet_id: str) -> None:
+        """Take the next photo this member posts here and make it the pet's face.
+
+        A button can't open an upload box: Discord modals hold text inputs and
+        nothing else, which is the same wall `/event` hit with its cover image.
+        So the button asks, and the cog watches for the answer — the member
+        posts the photo in the channel and the next one they send is the one.
+
+        The message they post is deliberately left alone. Right-click → This is
+        my pet already works off photos sitting in the channel, and quietly
+        deleting somebody's upload to tidy up would be a surprise.
+        """
+        guild = interaction.guild
+        channel = interaction.channel
+        if guild is None or channel is None:
+            return
+
+        record = await asyncio.to_thread(pet_registry.get_pet, guild.id, pet_id)
+        if record is None:
+            return await self._deny(interaction, "❌ That pet isn't registered any more.")
+        if not self._may_edit(interaction.user, record):
+            return await self._deny(interaction, "❌ That's not your pet.")
+
+        # One wait per member. Two open at once and the first photo they post
+        # would satisfy both, sending the same picture to two different pets.
+        if interaction.user.id in self._awaiting_photo:
+            return await self._deny(
+                interaction, "📷 I'm already waiting on a photo from you — post it, or leave it a minute."
+            )
+
+        await interaction.response.send_message(
+            f"📷 Post **{record.name}**'s new photo in this channel in the next "
+            f"{PHOTO_WAIT_SECONDS // 60} minutes and I'll use it.\n"
+            "Their treats, their crown and their bio all stay exactly as they are.",
+            ephemeral=True,
+        )
+
+        def is_the_photo(message: discord.Message) -> bool:
+            return (
+                message.author.id == interaction.user.id
+                and message.channel.id == channel.id
+                and any(
+                    (a.content_type or "").startswith("image/") for a in message.attachments
+                )
+            )
+
+        self._awaiting_photo.add(interaction.user.id)
+        try:
+            message = await self.bot.wait_for(
+                "message", check=is_the_photo, timeout=PHOTO_WAIT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            return await interaction.edit_original_response(
+                content=f"📷 Nothing arrived, so **{record.name}** keeps the photo they had."
+            )
+        finally:
+            self._awaiting_photo.discard(interaction.user.id)
+
+        attachment = next(
+            a for a in message.attachments if (a.content_type or "").startswith("image/")
+        )
+        if attachment.size > pet_registry.MAX_UPLOAD_BYTES:
+            return await interaction.edit_original_response(
+                content=f"❌ {pet_registry.TOO_BIG}"
+            )
+
+        try:
+            raw = await attachment.read()
+            updated = await asyncio.to_thread(
+                pet_registry.replace_photo, guild.id, pet_id, interaction.user.id, raw
+            )
+        except pet_registry.PetError as exc:
+            return await interaction.edit_original_response(content=f"❌ {exc}")
+        except Exception:
+            log.exception("[pets] could not swap the photo for %s", pet_id)
+            return await interaction.edit_original_response(
+                content="❌ That photo didn't take. Try again in a moment."
+            )
+
+        # Shown back rather than confirmed in words: the crop is automatic, and
+        # seeing it is the only way to know it didn't take the wrong half.
+        embed = discord.Embed(
+            title=f"📷 {updated.name} has a new photo",
+            colour=EMBED_COLOUR,
+            description="Not what you wanted? Press it again.",
+        )
+        file = self._thumb(updated)
+        if file is not None:
+            embed.set_thumbnail(url="attachment://pet.png")
+        await interaction.edit_original_response(
+            content=None, embed=embed, attachments=[file] if file else []
+        )
 
     async def _open_form(self, interaction: discord.Interaction, pet_id: str, build) -> None:
         """Check it's theirs, then hand over the modal.

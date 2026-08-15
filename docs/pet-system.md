@@ -139,9 +139,10 @@ It's cropped to a **square** and stored at 256×256. The crop aims at the busies
 part of the picture rather than the dead centre, so a tall portrait keeps the
 animal's head instead of its chest.
 
-There's no way to swap the photo later. To change it, remove the pet and
-register it again. The photo is copied and stored by the bot, so deleting your
-original message doesn't break it.
+You can change it later from 🐾 **Manage my pets** → 📷 **Change photo**, and
+nothing else about them changes — same treats, same crown, same bio, same place
+in the dex. The photo is copied and stored by the bot, so deleting your original
+message doesn't break it.
 
 ---
 
@@ -158,7 +159,8 @@ One form, five boxes, all optional:
 | **What are they like?** | Free text, several lines if you want. |
 
 Edit it from 🐾 **Manage my pets** → ✏️ **Edit bio**. **Only the owner** can edit
-a bio or rename a pet — not mods.
+a bio, change the photo, or rename a pet — not mods. Mods can still *remove* a
+pet, since taking a picture down is moderation.
 
 ---
 
@@ -190,6 +192,10 @@ one thing doing two jobs is how you end up bypassing your own treat count.
 🐾 **Manage my pets** lists **only your own**. Pick one and you get:
 
 - ✏️ **Edit bio** — the five-box form.
+- 📷 **Change photo** — press it, then post the new picture in the channel
+  within two minutes and it becomes their face. Their treats, their favourite
+  human and their bio all stay as they were. Discord won't let a button open an
+  upload box, which is why it asks you to post it rather than handing you a form.
 - 🏷️ **Rename** — its own small form, since a name can't be blank or clash.
 - 🗑️ **Remove** — behind a confirmation. Deletes the photo **and** the treat
   history.
