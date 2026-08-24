@@ -16,13 +16,22 @@ log = logging.getLogger("cozy.x_fix")
 TWITTER_DOMAINS = {"twitter.com", "www.twitter.com", "mobile.twitter.com"}
 X_DOMAINS = {"x.com", "www.x.com", "mobile.x.com"}
 INSTAGRAM_DOMAINS = {"instagram.com", "www.instagram.com"}
+# ddinstagram.com is gone — the host no longer resolves at all, so every link the
+# bot rewrote to it turned into a dead link. kkinstagram.com is the mirror that
+# took over; these hosts are rewritten to it alongside instagram.com itself so
+# older ddinstagram links people paste in get repaired too.
+DEAD_INSTAGRAM_DOMAINS = {"ddinstagram.com", "www.ddinstagram.com", "d.ddinstagram.com"}
+INSTAGRAM_HOST = "kkinstagram.com"
+# Only these Instagram paths have something to embed. Profile links (/<user>/)
+# 404 on the mirror, so they are left exactly as posted.
+INSTAGRAM_EMBEDDABLE_PATH = re.compile(r"^(p|reel|reels|tv|share|stories)(/|$)", re.IGNORECASE)
 # NOTE: Reddit and Facebook are deliberately not rewritten, and their links are
 # left exactly as posted. Reddit is actively blocking the mirrors (rxddit.com now
 # 502s "Forbidden."), and fxfacebook.com has no DNS record at all — rewriting to
 # either replaced people's posts with dead links.
 SKIP_DOMAINS = {
     "fxtwitter.com", "vxtwitter.com", "fixupx.com", "fixvx.com",
-    "ddinstagram.com",
+    "kkinstagram.com",
 }
 FIXABLE_DOMAINS = ("twitter.com", "x.com", "instagram.com")
 
@@ -59,8 +68,10 @@ def _swap_domain(url: str) -> str:
         new_host = "fxtwitter.com"
     elif lhost in X_DOMAINS:
         new_host = "fixupx.com"
-    elif lhost in INSTAGRAM_DOMAINS:
-        new_host = "ddinstagram.com"
+    elif lhost in INSTAGRAM_DOMAINS or lhost in DEAD_INSTAGRAM_DOMAINS:
+        if not INSTAGRAM_EMBEDDABLE_PATH.match(path.split("?", 1)[0].split("#", 1)[0]):
+            return url
+        new_host = INSTAGRAM_HOST
     else:
         return url
     return f"{scheme}://{new_host}{slash}{path}"
