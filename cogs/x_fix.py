@@ -8,8 +8,10 @@ import re
 import time
 from typing import Tuple, Optional, Iterable, List
 
+import aiohttp
 import discord
 from discord.ext import commands
+from urllib.parse import urljoin
 
 log = logging.getLogger("cozy.x_fix")
 
@@ -21,19 +23,49 @@ INSTAGRAM_DOMAINS = {"instagram.com", "www.instagram.com"}
 # took over; these hosts are rewritten to it alongside instagram.com itself so
 # older ddinstagram links people paste in get repaired too.
 DEAD_INSTAGRAM_DOMAINS = {"ddinstagram.com", "www.ddinstagram.com", "d.ddinstagram.com"}
-INSTAGRAM_HOST = "kkinstagram.com"
 # Only these Instagram paths have something to embed. Profile links (/<user>/)
 # 404 on the mirror, so they are left exactly as posted.
 INSTAGRAM_EMBEDDABLE_PATH = re.compile(r"^(p|reel|reels|tv|share|stories)(/|$)", re.IGNORECASE)
+
+# Ordered mirror candidates per platform. Every rewrite is probed before it is
+# used (see _probe_embeddable), and the first mirror that actually serves an
+# embeddable response wins. When one dies the next takes over on its own — no
+# redeploy, and no repeat of the ddinstagram/rxddit/fxfacebook breakages where a
+# host vanished and the bot went on replacing people's posts with dead links.
+TWITTER_MIRRORS = ("fxtwitter.com", "vxtwitter.com")
+X_MIRRORS = ("fixupx.com", "fixvx.com")
+INSTAGRAM_MIRRORS = ("kkinstagram.com", "eeinstagram.com")
+MIRROR_HOSTS = frozenset(TWITTER_MIRRORS + X_MIRRORS + INSTAGRAM_MIRRORS)
+
 # NOTE: Reddit and Facebook are deliberately not rewritten, and their links are
 # left exactly as posted. Reddit is actively blocking the mirrors (rxddit.com now
 # 502s "Forbidden."), and fxfacebook.com has no DNS record at all — rewriting to
 # either replaced people's posts with dead links.
-SKIP_DOMAINS = {
-    "fxtwitter.com", "vxtwitter.com", "fixupx.com", "fixvx.com",
-    "kkinstagram.com",
-}
+SKIP_DOMAINS = set(MIRROR_HOSTS)
 FIXABLE_DOMAINS = ("twitter.com", "x.com", "instagram.com")
+
+# ── Embed probing ──────────────────────────────────────────────────────
+# Discord's crawler is what has to be satisfied, so ask as Discord asks.
+PROBE_UA = "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)"
+PROBE_TIMEOUT_SECONDS = 6
+PROBE_MAX_REDIRECTS = 3
+PROBE_HTML_READ_BYTES = 64 * 1024
+# A mirror handing us straight to the CDN is the success case for video posts.
+MEDIA_HOST_HINTS = ("cdninstagram.com", "fbcdn.net", "twimg.com")
+# HTTP 200 is not proof of anything: eeinstagram.com answers 200 with a perfectly
+# well-formed page whose og:description reads "Post not found". Require real
+# media tags, and reject the pages that politely announce their own failure.
+OG_MEDIA_RE = re.compile(
+    rb"""<meta[^>]+(?:property|name)=["'](?:og:video(?::(?:url|secure_url))?|og:image|twitter:image|twitter:player)["']""",
+    re.IGNORECASE,
+)
+OG_MISSING_RE = re.compile(
+    rb"""(?:og:description|og:title)["'][^>]*content=["'][^"']*(?:not found|unavailable|no longer|private|error)""",
+    re.IGNORECASE,
+)
+# Consecutive failures before a mirror is benched, and for how long.
+HOST_FAIL_THRESHOLD = 3
+HOST_BLOCK_SECONDS = 600
 
 URL_REGEX = re.compile(r"(?<!<)(https?://[^\s>]+)")
 WEBHOOK_NAME = "LinkFix Bridge"
@@ -52,45 +84,77 @@ ALLOWED_CHANNEL_IDS = {
 }
 
 
-def _swap_domain(url: str) -> str:
+def _candidate_urls(url: str) -> List[str]:
+    """Every mirror rewrite worth trying for this URL, best first. Empty means leave it alone."""
     # Rebuild the URL from its parts rather than str.replace()-ing the host: the
     # host is lowercased for matching, so replacing it in a mixed-case URL either
     # missed entirely or, worse, hit a matching substring further down the path.
     try:
-        scheme, after = url.split("://", 1)
+        _scheme, after = url.split("://", 1)
     except ValueError:
-        return url
+        return []
     host, slash, path = after.partition("/")
     lhost = host.lower()
     if lhost in SKIP_DOMAINS:
-        return url
+        return []
     if lhost in TWITTER_DOMAINS:
-        new_host = "fxtwitter.com"
+        mirrors = TWITTER_MIRRORS
     elif lhost in X_DOMAINS:
-        new_host = "fixupx.com"
+        mirrors = X_MIRRORS
     elif lhost in INSTAGRAM_DOMAINS or lhost in DEAD_INSTAGRAM_DOMAINS:
         if not INSTAGRAM_EMBEDDABLE_PATH.match(path.split("?", 1)[0].split("#", 1)[0]):
-            return url
-        new_host = INSTAGRAM_HOST
+            return []
+        mirrors = INSTAGRAM_MIRRORS
     else:
-        return url
-    return f"{scheme}://{new_host}{slash}{path}"
+        return []
+    # Mirrors are https-only; never carry a plaintext scheme across.
+    return [f"https://{m}{slash}{path}" for m in mirrors]
 
 
-def _has_skip_domain(text: str) -> bool:
-    return any(d in text.lower() for d in SKIP_DOMAINS)
+def _host_of(url: str) -> str:
+    try:
+        return url.split("://", 1)[1].partition("/")[0].lower()
+    except IndexError:
+        return ""
 
 
-def _fix_message_content(content: str) -> Tuple[str, int]:
-    count = 0
-    def repl(m: re.Match) -> str:
-        nonlocal count
-        url = m.group(1)
-        new_url = _swap_domain(url)
-        if new_url != url:
-            count += 1
-        return new_url
-    return URL_REGEX.sub(repl, content), count
+async def _probe_embeddable(session: aiohttp.ClientSession, url: str) -> bool:
+    """True only if Discord's crawler would get something embeddable out of this URL."""
+    current = url
+    for _ in range(PROBE_MAX_REDIRECTS + 1):
+        async with session.get(
+            current,
+            headers={"User-Agent": PROBE_UA},
+            allow_redirects=False,
+            timeout=aiohttp.ClientTimeout(total=PROBE_TIMEOUT_SECONDS),
+        ) as resp:
+            if resp.status in (301, 302, 303, 307, 308):
+                loc = resp.headers.get("Location") or ""
+                if not loc:
+                    return False
+                nxt = urljoin(current, loc)
+                nhost = _host_of(nxt)
+                if any(hint in nhost for hint in MEDIA_HOST_HINTS):
+                    return True  # handed straight to the media CDN — that embeds
+                if nhost not in MIRROR_HOSTS:
+                    # Punted back to instagram.com/x.com, or off to an ad network
+                    # (instagramez.com does exactly this). Neither embeds.
+                    return False
+                current = nxt
+                continue
+
+            if resp.status != 200:
+                return False
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            if ctype.startswith(("video/", "image/")):
+                return True
+            if "html" not in ctype:
+                return False
+            body = await resp.content.read(PROBE_HTML_READ_BYTES)
+            if OG_MISSING_RE.search(body):
+                return False
+            return bool(OG_MEDIA_RE.search(body))
+    return False
 
 
 def _fingerprint(channel_id: int, content: str) -> str:
@@ -145,6 +209,73 @@ class XFixCog(commands.Cog):
         self._recent_fps: dict[str, float] = {}
         self._fp_lock = asyncio.Lock()
         self._sweeper_started = False
+        self._http: Optional[aiohttp.ClientSession] = None
+        # host -> (consecutive failures, blocked-until timestamp)
+        self._host_health: dict[str, Tuple[int, float]] = {}
+
+    async def cog_unload(self):
+        if self._http and not self._http.closed:
+            await self._http.close()
+
+    # ── Mirror selection ───────────────────────────────────────────────
+    def _session(self) -> aiohttp.ClientSession:
+        if self._http is None or self._http.closed:
+            self._http = aiohttp.ClientSession()
+        return self._http
+
+    async def _mirror_ok(self, url: str) -> bool:
+        """Probe one candidate, with a circuit breaker so a dead host isn't re-dialled forever."""
+        host = _host_of(url)
+        now = time.time()
+        fails, blocked_until = self._host_health.get(host, (0, 0.0))
+        if now < blocked_until:
+            return False
+        try:
+            ok = await _probe_embeddable(self._session(), url)
+        except Exception as e:
+            log.info("Probe of %s failed: %s", url, e)
+            ok = False
+        if ok:
+            self._host_health.pop(host, None)
+            return True
+        fails += 1
+        blocked = now + HOST_BLOCK_SECONDS if fails >= HOST_FAIL_THRESHOLD else 0.0
+        self._host_health[host] = (fails, blocked)
+        if blocked:
+            log.warning("Mirror %s benched for %ds after %d consecutive failures — is it dead?",
+                        host, HOST_BLOCK_SECONDS, fails)
+        return False
+
+    async def _rewrite_urls(self, content: str) -> Tuple[str, int, List[str]]:
+        """Rewrite every link whose mirror is verified to embed. Returns (content, swapped, notes).
+
+        A link whose mirrors all fail is left exactly as posted — better a bare
+        link than deleting someone's message and reposting a dead one.
+        """
+        out: List[str] = []
+        notes: List[str] = []
+        last = 0
+        count = 0
+        for m in URL_REGEX.finditer(content):
+            candidates = _candidate_urls(m.group(1))
+            if not candidates:
+                continue
+            chosen = None
+            for cand in candidates:
+                if await self._mirror_ok(cand):
+                    chosen = cand
+                    break
+            out.append(content[last:m.start()])
+            if chosen:
+                out.append(chosen)
+                count += 1
+                notes.append(f"{_host_of(m.group(1))} → {_host_of(chosen)}")
+            else:
+                out.append(m.group(1))
+                notes.append(f"{_host_of(m.group(1))} → no working mirror ({len(candidates)} tried)")
+            last = m.end()
+        out.append(content[last:])
+        return "".join(out), count, notes
 
     # ── Helpers ────────────────────────────────────────────────────────
     def _mark_and_check_recent_id(self, mid: int) -> bool:
@@ -227,10 +358,15 @@ class XFixCog(commands.Cog):
             log.info("RETURN id=%s channel=%s: content already contains a fixed/skip domain", message.id, cid)
             return
 
-        fixed, num = _fix_message_content(message.content)
+        fixed, num, notes = await self._rewrite_urls(message.content)
         if num <= 0:
-            log.info("RETURN id=%s channel=%s: no URLs swapped (num=%d)", message.id, cid, num)
+            # Either nothing was rewritable, or every mirror failed its probe. In
+            # the latter case the message stays exactly as posted — the bot never
+            # deletes a post it cannot actually replace with a working link.
+            log.info("RETURN id=%s channel=%s: no URLs swapped (num=%d) notes=%s",
+                     message.id, cid, num, notes or "none")
             return
+        log.info("id=%s channel=%s: mirrors chosen: %s", message.id, cid, "; ".join(notes))
 
         fp = _fingerprint(message.channel.id, fixed)
         if await self._mark_and_check_fp(fp):
@@ -316,7 +452,7 @@ class XFixCog(commands.Cog):
         in_allowlist = ctx.channel.id in ALLOWED_CHANNEL_IDS
         has_fixable = any(d in target.content.lower() for d in FIXABLE_DOMAINS)
         has_skip = _has_skip_domain(target.content)
-        fixed, num = _fix_message_content(target.content)
+        fixed, num, notes = await self._rewrite_urls(target.content)
         fp = _fingerprint(ctx.channel.id, fixed)
         hist_dupe = await self._history_has_same_fp(ctx.channel, fp)
         wh = await _get_or_create_webhook(ctx.channel)
@@ -330,11 +466,15 @@ class XFixCog(commands.Cog):
             f"• contains fixable domain: **{has_fixable}**",
             f"• already-fixed/skip domain present: **{has_skip}**",
             f"• URLs swapped: **{num}**",
+            f"• mirror probe: {', '.join(f'`{n}`' for n in notes) if notes else '*no rewritable links*'}",
             f"• duplicate in last {HISTORY_DEDUP_LOOKBACK} of history: **{hist_dupe}**",
             f"• webhook available: **{wh is not None}**",
         ]
         if perms is not None:
             lines.append(f"• perms: manage_webhooks=**{perms.manage_webhooks}** manage_messages=**{perms.manage_messages}**")
+        benched = [h for h, (_f, until) in self._host_health.items() if time.time() < until]
+        if benched:
+            lines.append(f"• ⚠️ benched mirrors: {', '.join(f'`{h}`' for h in sorted(benched))}")
         if num > 0:
             lines.append(f"• fixed → `{fixed[:300]}`")
 
@@ -350,7 +490,8 @@ class XFixCog(commands.Cog):
         elif has_skip:
             verdict = "❌ Would SKIP: content already contains a fixed/skip domain."
         elif num <= 0:
-            verdict = "❌ Would SKIP: no URLs swapped."
+            verdict = ("❌ Would SKIP: no mirror passed its embed probe — message left as posted."
+                       if notes else "❌ Would SKIP: no URLs swapped.")
         elif hist_dupe:
             verdict = "❌ Would SKIP: dedup — matching message already in recent history."
         elif wh is None:
