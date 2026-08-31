@@ -1,16 +1,27 @@
 ---
-title: Staff have a panel now
+title: Admin panel for staff commands
 tags: Developments, Done
 ---
-Every staff command used to be something you had to remember the name of. There were about twenty of them, and nobody remembers twenty.
+**Summary**
+All staff commands are now reachable from one button in the staff channel. Nothing was removed — every command is still typeable.
 
-So there is now one message in the staff channel with a single button on it: **Administration**. Press it and you get a private menu only you can see — drawers for moderation, the morning paper, birthdays, the pets, the bot itself — and each button asks for whatever it needs (which channel, which member, how long) and then gets on with it.
+**Drawers**
+• Discord Moderation — purge, timeout, untimeout
+• Bot Panels — repost landing zone + get-roles, repost pet panel
+• Morning News — test paper, post today's paper
+• Birthdays — list, today, add, remove
+• Mittens the Menace — rotate status, status ideas, custom lines, avatar
+• Pets — treats top-up
+• Create an Event — on the home screen
+• Slash Commands — live list of everything without a button
 
-Worth knowing:
+**Usage**
+• Press **Administration** → private menu, visible only to you
+• Buttons ask for what they need (channel / member / duration) then run
+• You only see what your roles allow
+• Panel stays at the bottom of the channel; `/adminpanel` reposts it
 
-• You only see what you are allowed to press. If a button is not there, it is not for you.
-• Nothing became more permissive. Every button runs the exact same command you would have typed, with the same rules behind it.
-• The panel keeps itself at the bottom of the channel, so it never scrolls away. If it ever goes missing, `/adminpanel` puts it back.
-• There is a **Slash Commands** button listing everything that has no button yet. It reads the live list, so new commands turn up there on their own.
-
-Everything is still typeable if you prefer typing. The panel is for the other days.
+**Notes**
+• Permissions unchanged — each button runs the same command with the same checks
+• Destructive actions (purge, remove, live paper post) have a confirm step
+• Screens expire after ~12 min; press Administration again
