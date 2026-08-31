@@ -29,6 +29,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from PIL import Image
 
+from cogs.admin_panel import PANEL_CHANNEL_ID
 from common import storage
 
 log = logging.getLogger("cozy.seasonal_avatar")
@@ -40,8 +41,13 @@ STATE_FILE = storage.DATA_DIR / "avatar_state.json"
 TIMEZONE = ZoneInfo("Europe/Brussels")
 CHECK_MINUTES = 60
 
-# Avatar commands only work in this channel.
+# Avatar commands only work in these channels.
 CONTROL_CHANNEL_ID = 1429796227192459264
+# The staff panel's button for this runs wherever the panel is posted, and an
+# interaction can't be moved to another channel, so that channel counts too.
+# Imported rather than copied: a second literal would silently disagree the
+# day the panel moves.
+CONTROL_CHANNEL_IDS = {CONTROL_CHANNEL_ID, PANEL_CHANNEL_ID}
 
 DEFAULT_KEY = "default"
 MAX_EDGE = 1024          # Discord displays avatars small; 1024 is plenty
@@ -313,7 +319,7 @@ class SeasonalAvatar(commands.Cog):
 
     async def _wrong_channel(self, interaction: discord.Interaction) -> bool:
         """True (and replies) if this isn't the control channel."""
-        if interaction.channel_id == CONTROL_CHANNEL_ID:
+        if interaction.channel_id in CONTROL_CHANNEL_IDS:
             return False
         await interaction.response.send_message(
             f"Not here. Use <#{CONTROL_CHANNEL_ID}>. 😼",

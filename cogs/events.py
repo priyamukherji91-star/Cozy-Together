@@ -44,6 +44,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from discord.utils import MISSING
 
+from cogs.admin_panel import PANEL_CHANNEL_ID
 from common import storage
 
 try:
@@ -63,6 +64,11 @@ GENERAL_CHANNEL_ID = 1425974792745648252  # where the announcement is posted
 
 # /event may only be invoked from this channel...
 COMMAND_CHANNEL_ID = 1429796227192459264
+# The staff panel's button for this runs wherever the panel is posted, and an
+# interaction can't be moved to another channel, so that channel counts too.
+# Imported rather than copied: a second literal would silently disagree the
+# day the panel moves.
+COMMAND_CHANNEL_IDS = {COMMAND_CHANNEL_ID, PANEL_CHANNEL_ID}
 # ...and only by members holding one of these roles.
 ALLOWED_ROLE_IDS = {1425977436859797595, 1426194314337189949}
 
@@ -276,7 +282,7 @@ class EventsCog(commands.Cog):
 
         # Restrict where the command runs and who may run it. These gates must come
         # before send_modal — we get exactly one response (an error OR the popup).
-        if interaction.channel is None or interaction.channel.id != COMMAND_CHANNEL_ID:
+        if interaction.channel is None or interaction.channel.id not in COMMAND_CHANNEL_IDS:
             return await interaction.response.send_message(
                 f"Use this in <#{COMMAND_CHANNEL_ID}>. Mittens is very strict and deeply annoying.",
                 ephemeral=True,

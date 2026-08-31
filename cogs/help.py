@@ -33,6 +33,7 @@ from discord.ext import commands
 
 # Imported rather than re-declared: these IDs decide who sees what, and a copy
 # here would silently disagree the day one of them moves.
+from cogs.admin_panel import PANEL_CHANNEL_ID, may_open
 from cogs.events import ALLOWED_ROLE_IDS as EVENT_ROLE_IDS
 from cogs.member_cards import MEMBER_CARD_CHANNEL_ID
 from cogs.mittens_wallofshame import FRESH_MEAT_ROLE_ID
@@ -61,6 +62,11 @@ def _can_shame(user: discord.abc.User) -> bool:
 def _can_event(user: discord.abc.User) -> bool:
     """Mirrors the role check at the top of `events.event`."""
     return bool(_roles_of(user) & EVENT_ROLE_IDS)
+
+
+def _is_staff(user: discord.abc.User) -> bool:
+    """Whoever the staff panel would open for — asked rather than restated."""
+    return isinstance(user, discord.Member) and may_open(user)
 
 
 class Help(commands.Cog):
@@ -127,6 +133,20 @@ class Help(commands.Cog):
                 value=(
                     "`/event` — create a scheduled event, a forum thread for it, "
                     "and the announcement, in one go."
+                ),
+                inline=False,
+            )
+
+        # Staff only, and only a pointer: the panel explains itself once it's
+        # open, and the whole reason it exists is that nobody should have to
+        # read a list of twenty staff commands anywhere.
+        if _is_staff(user):
+            embed.add_field(
+                name="😾 Staff",
+                value=(
+                    f"The panel in <#{PANEL_CHANNEL_ID}> holds every staff command "
+                    "there is — moderation, the paper, the pets, his face. "
+                    "`/adminpanel` puts it back if it goes missing."
                 ),
                 inline=False,
             )

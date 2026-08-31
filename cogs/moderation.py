@@ -3,7 +3,7 @@
 Mittens the Menace — Moderation Cog (Slash version)
 
 Slash Commands:
-  /purge amount:int                          – delete recent messages (Mama Cat & Ghoul only)
+  /purge amount:int [channel]                – delete recent messages (Mama Cat & Ghoul only)
   /timeout user:member duration:str reason   – timeout a member with Mittens flair
   /untimeout user:member                     – remove timeout early
 
@@ -119,10 +119,22 @@ class MittensModeration(commands.Cog):
         return True
 
     # ────────────── /purge ───────────────
-    @app_commands.command(name="purge", description="Delete recent messages in this channel (max 200).")
-    @app_commands.describe(amount="How many recent messages to delete (1–200).")
-    async def purge(self, interaction: discord.Interaction, amount: app_commands.Range[int, 1, 200]):
-        channel = interaction.channel
+    @app_commands.command(name="purge", description="Delete recent messages in a channel (max 200).")
+    @app_commands.describe(
+        amount="How many recent messages to delete (1–200).",
+        channel="Which channel to clear. Defaults to the one you're in.",
+    )
+    async def purge(
+        self,
+        interaction: discord.Interaction,
+        amount: app_commands.Range[int, 1, 200],
+        channel: discord.TextChannel | None = None,
+    ):
+        # `channel` is here for the staff panel: a button runs in whatever
+        # channel the panel is sitting in, so without it every purge from the
+        # panel would clear the panel's own channel. Typed without it, this
+        # still means "here", which is what it always meant.
+        channel = channel or interaction.channel
         if not isinstance(channel, discord.TextChannel):
             return await _deny(interaction, "This can only be used in a text channel.")
 

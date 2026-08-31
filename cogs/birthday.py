@@ -14,6 +14,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from cogs.admin_panel import PANEL_CHANNEL_ID
 from cogs.member_cards import MEMBER_CARD_CHANNEL_ID as BOT_COMMAND_CHANNEL_ID
 from common import storage
 
@@ -35,6 +36,11 @@ GENERAL_CHANNEL_ID = 1425974792745648252
 MEMBER_COMMAND_CHANNEL_IDS = frozenset({GENERAL_CHANNEL_ID, BOT_COMMAND_CHANNEL_ID})
 
 ADMIN_COMMAND_CHANNEL_ID = 1429796227192459264
+# The staff panel's button for this runs wherever the panel is posted, and an
+# interaction can't be moved to another channel, so that channel counts too.
+# Imported rather than copied: a second literal would silently disagree the
+# day the panel moves.
+ADMIN_COMMAND_CHANNEL_IDS = {ADMIN_COMMAND_CHANNEL_ID, PANEL_CHANNEL_ID}
 
 # Fixed GMT+1, exactly as requested: 9am GMT+1 every day.
 BIRTHDAY_TZ = timezone(timedelta(hours=1), name="GMT+1")
@@ -213,7 +219,7 @@ class BirthdayCog(commands.Cog):
         return bool(interaction.channel and interaction.channel.id in MEMBER_COMMAND_CHANNEL_IDS)
 
     def _is_admin_channel(self, interaction: discord.Interaction) -> bool:
-        return bool(interaction.channel and interaction.channel.id == ADMIN_COMMAND_CHANNEL_ID)
+        return bool(interaction.channel and interaction.channel.id in ADMIN_COMMAND_CHANNEL_IDS)
 
     @staticmethod
     def _is_admin_member(member: discord.Member) -> bool:
