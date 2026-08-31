@@ -21,7 +21,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from openai import OpenAI
 
-from common import storage
+from common import lines, storage
 
 LOG = logging.getLogger(__name__)
 
@@ -135,11 +135,16 @@ QUIET_OPENERS = [
 ]
 
 # Rendered as the Menace of the Day block on days when no valid uploaded photo qualifies.
-MENACE_EMPTY_LINES = [
-    "Menace of the Day is cancelled on account of your collective laziness. Zero pets, zero crimes, zero evidence. I'm taking this personally. Go post. That's an order.",
-    "No Menace of the Day. Not one of you posted a single photo worth mocking. A barren, cowardly wasteland. Go post your pets like functional adults.",
-    "There is no menace today because none of you did anything. Empty channel, empty hearts. Show me a dog, show me a goblin cat, show me anything.",
-]
+MENACE_EMPTY_LINES: tuple[str, ...] = lines.register(
+    "news.menace_empty",
+    "Paper: no menace photo",
+    [
+        "Menace of the Day is cancelled on account of your collective laziness. Zero pets, zero crimes, zero evidence. I'm taking this personally. Go post. That's an order.",
+        "No Menace of the Day. Not one of you posted a single photo worth mocking. A barren, cowardly wasteland. Go post your pets like functional adults.",
+        "There is no menace today because none of you did anything. Empty channel, empty hearts. Show me a dog, show me a goblin cat, show me anything.",
+    ],
+    where="the paper's menace slot on a day with no photo",
+)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -837,7 +842,7 @@ class MorningNews(commands.Cog):
         """Text-only degradation. Carries the full bodies — an embed description
         allows 4096 characters, so nothing needs cutting to fit here."""
         body = story_to_markdown(story)
-        menace_text = caption if menace is not None else random.choice(MENACE_EMPTY_LINES)
+        menace_text = caption if menace is not None else lines.pick("news.menace_empty")
         body = normalize_news_format(f"{body.strip()}\n\n{DIVIDER}\n{build_menace_block(menace_text)}")
 
         embed = discord.Embed(

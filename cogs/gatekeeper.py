@@ -10,6 +10,8 @@ Gatekeeper Cog — Landing Zone ✅ -> role grant
 
 import logging
 
+from typing import Optional
+
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -44,6 +46,45 @@ def _member_has_power(member: discord.Member) -> bool:
         or GHOUL_ROLE_NAME in names
         or member.guild_permissions.administrator
     )
+
+# ──────────────────────────────────────────────
+async def post_gate(guild: discord.Guild) -> Optional[discord.TextChannel]:
+    """Put a fresh gate in the landing zone and clear the ones above it.
+
+    A module-level function rather than a method because the staff panel posts
+    this and the get-roles menus with one button, and that button is one command
+    in `onboarding.py` — reaching a cog instance across cogs to do it would tie
+    the two together for no gain. Returns the channel it posted in, or None.
+
+    Old gates are swept rather than left: two gate messages in a landing zone is
+    two sets of people reacting to the one that is no longer watched. Matched by
+    title, so it catches gates from before a restart as well.
+    """
+    channel = guild.get_channel(LANDING_ZONE_ID)
+    if not isinstance(channel, discord.TextChannel):
+        return None
+
+    embed = discord.Embed(title=GATE_TITLE, description=GATE_TEXT, color=0x2ecc71)
+    embed.set_footer(text="React with ✅ below")
+
+    msg = await channel.send(embed=embed)
+    try:
+        await msg.add_reaction("✅")
+    except Exception:
+        LOG.debug("could not add the gate reaction", exc_info=True)
+
+    me = guild.me
+    if me is not None and channel.permissions_for(me).manage_messages:
+        try:
+            async for old in channel.history(limit=50):
+                if old.id == msg.id or old.author.id != guild.me.id:
+                    continue
+                if old.embeds and (old.embeds[0].title or "") == GATE_TITLE:
+                    await old.delete()
+        except Exception:
+            LOG.debug("could not clear the old gate", exc_info=True)
+    return channel
+
 
 class Gatekeeper(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -123,29 +164,19 @@ class Gatekeeper(commands.Cog):
         if not _member_has_power(interaction.user):
             return await interaction.response.send_message("You don’t have paws for this. 🐾", ephemeral=True)
 
-        channel = interaction.guild.get_channel(LANDING_ZONE_ID)
-        if not isinstance(channel, discord.TextChannel):
-            return await interaction.response.send_message("Landing-zone channel not found.", ephemeral=True)
-
         try:
             await interaction.response.defer(ephemeral=True, thinking=False)
         except discord.InteractionResponded:
             pass
 
-        embed = discord.Embed(
-            title=GATE_TITLE,
-            description=GATE_TEXT,
-            color=0x2ecc71
+        channel = await post_gate(interaction.guild)
+        if channel is None:
+            return await interaction.followup.send(
+                "Landing-zone channel not found.", ephemeral=True
+            )
+        await interaction.followup.send(
+            f"Gate message posted in {channel.mention}.", ephemeral=True
         )
-        embed.set_footer(text="React with ✅ below")
-
-        msg = await channel.send(embed=embed)
-        try:
-            await msg.add_reaction("✅")
-        except Exception:
-            pass
-
-        await interaction.followup.send(f"Gate message posted in {channel.mention}.", ephemeral=True)
 
     # ────────────── REACTION GATE ──────────────
     @commands.Cog.listener()

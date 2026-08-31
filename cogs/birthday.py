@@ -352,6 +352,41 @@ class BirthdayCog(commands.Cog):
             allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
         )
 
+    @birthday.command(name="add", description="Add or correct a member's birthday. Format: DD/MM")
+    @app_commands.describe(
+        member="Whose birthday it is.",
+        date="Their birthday in DD/MM format, for example 05/09.",
+    )
+    async def birthday_add(
+        self, interaction: discord.Interaction, member: discord.Member, date: str
+    ) -> None:
+        """Set somebody else's birthday.
+
+        `/birthday set` is the member's own, in the member channels, and it can
+        only ever write the caller's — which leaves no way to fix a typo or to
+        enter one for somebody who never got round to it. Same store, same
+        format, same gates as the other admin commands here.
+        """
+        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+            return await interaction.response.send_message("Guild only.", ephemeral=True)
+
+        if not self._is_admin_channel(interaction):
+            return await self._deny_admin_channel(interaction)
+        if not self._is_admin_member(interaction.user):
+            return await self._deny_admin(interaction)
+
+        try:
+            day, month = _valid_ddmm(date)
+        except ValueError as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+
+        entry = self.store.set_birthday(member, day, month)
+        await interaction.response.send_message(
+            f"Written down: **{entry.display_line}** 🐾",
+            ephemeral=False,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
     @birthday.command(name="remove", description="Remove a member's birthday entry.")
     @app_commands.describe(member="The member whose birthday to remove.")
     async def birthday_remove(self, interaction: discord.Interaction, member: discord.Member) -> None:

@@ -10,7 +10,7 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 
-from common import storage
+from common import lines, storage
 
 try:
     from zoneinfo import ZoneInfo  # py3.9+
@@ -46,48 +46,58 @@ GHOUL_ROLE_NAME = "Ghoul"
 TEST_ALLOWED_ROLE_IDS = {1425977436859797595, 1426194314337189949}
 
 
-DAILY_LINES = [
-    "Your dailies are up. Bring me results, not the little bedtime stories you tell yourself.",
-    "Off you go, scavenging tomes and dignity in equal measure.",
-    "Your dailies are up. For the three of you who survived Dawntrail and stayed subscribed, congrats.",
-    "Time to perform meaningless labor for tomestones and emotional scraps.",
-    "Get off the sofa, you upholstered excuse for a Warrior of Light.",
-    "Pretend you have purpose beyond standing in Limsa.",
-    "Remove the horny little glam and go engage with combat, freak.",
-    "Queue up, and this time try not to play like a community warning.",
-    "Your dailies are waiting. Save the main character syndrome for Limsa.",
-    "Reset... go contribute something, you decorative parasite",
-    "The aetheryte is not your workstation, you idle little barnacle.",
-    "If you have time to pose, you have time to stop being ornamental and queue.",
-    "Get in there before I file a formal complaint about your decorative existence.",
-    "One had hoped you might eventually justify your subscription.",
-    "One does tire of seeing so much glamour and so little competence.",
-    "Your roulettes are available. Try not to make a spectacle of your inadequacy.",
-    "Your roulettes await. Even now, I cling to the vulgar hope that you may be useful.",
-    "Your dailies are up. I have seen retainers with more initiative.",
-    "Your roulettes are available. Try to remember that confidence and competence are not hereditary.",
-    "Your dailies are up. Really, dear, must your entire personality remain in /gpose?",
-    "Daily reset. I will not say you are useless. I will merely observe that Eorzea has yet to notice your absence.",
-    "One must accept that not everyone can be excellent. But you might at least be occupied.",
-    "Must you always look so committed to doing nothing?",
-    "There is something deeply reassuring about your consistency. You are idle in every expansion.",
-    "Your dailies await. If you moved any less, we’d have to water you.",
-    "Your dailies are up. One hates to interrupt such passionate loafing…",
-    "The realm remains in peril, though naturally you are still dressed for brunch.",
-    "I cannot say whether you are lazy or merely committed to atmosphere.",
-    "One trembles to think of four or seven strangers relying on you.",
-    "For someone allegedly touched by destiny, you do lounge remarkably hard.",
-    "The Scions crossed continents, dimensions, and death itself. You can manage a roulette.",
-]
+DAILY_LINES: tuple[str, ...] = lines.register(
+    "resets.daily",
+    "Daily reset announcements",
+    [
+        "Your dailies are up. Bring me results, not the little bedtime stories you tell yourself.",
+        "Off you go, scavenging tomes and dignity in equal measure.",
+        "Your dailies are up. For the three of you who survived Dawntrail and stayed subscribed, congrats.",
+        "Time to perform meaningless labor for tomestones and emotional scraps.",
+        "Get off the sofa, you upholstered excuse for a Warrior of Light.",
+        "Pretend you have purpose beyond standing in Limsa.",
+        "Remove the horny little glam and go engage with combat, freak.",
+        "Queue up, and this time try not to play like a community warning.",
+        "Your dailies are waiting. Save the main character syndrome for Limsa.",
+        "Reset... go contribute something, you decorative parasite",
+        "The aetheryte is not your workstation, you idle little barnacle.",
+        "If you have time to pose, you have time to stop being ornamental and queue.",
+        "Get in there before I file a formal complaint about your decorative existence.",
+        "One had hoped you might eventually justify your subscription.",
+        "One does tire of seeing so much glamour and so little competence.",
+        "Your roulettes are available. Try not to make a spectacle of your inadequacy.",
+        "Your roulettes await. Even now, I cling to the vulgar hope that you may be useful.",
+        "Your dailies are up. I have seen retainers with more initiative.",
+        "Your roulettes are available. Try to remember that confidence and competence are not hereditary.",
+        "Your dailies are up. Really, dear, must your entire personality remain in /gpose?",
+        "Daily reset. I will not say you are useless. I will merely observe that Eorzea has yet to notice your absence.",
+        "One must accept that not everyone can be excellent. But you might at least be occupied.",
+        "Must you always look so committed to doing nothing?",
+        "There is something deeply reassuring about your consistency. You are idle in every expansion.",
+        "Your dailies await. If you moved any less, we’d have to water you.",
+        "Your dailies are up. One hates to interrupt such passionate loafing…",
+        "The realm remains in peril, though naturally you are still dressed for brunch.",
+        "I cannot say whether you are lazy or merely committed to atmosphere.",
+        "One trembles to think of four or seven strangers relying on you.",
+        "For someone allegedly touched by destiny, you do lounge remarkably hard.",
+        "The Scions crossed continents, dimensions, and death itself. You can manage a roulette.",
+    ],
+    where="the daily reset post, 8am UTC",
+)
 
-WEEKLY_LINES = [
-    "Your weekly obligations have returned. I trust your despair is suitably dignified.",
-    "Weekly reset. Do step away from the glamour plate, dear. Beauty is no substitute for output.",
-    "Your weeklies are available. I expect motion, not another week of decorative paralysis in Limsa.",
-    "A new week begins. Do make some modest effort toward usefulness.",
-    "Your weekly duties await. I would not call them enjoyable, but then neither are you.",
-    "Your weeklies are up. How charming that Eorzea still believes in your potential.",
-]
+WEEKLY_LINES: tuple[str, ...] = lines.register(
+    "resets.weekly",
+    "Weekly reset announcements",
+    [
+        "Your weekly obligations have returned. I trust your despair is suitably dignified.",
+        "Weekly reset. Do step away from the glamour plate, dear. Beauty is no substitute for output.",
+        "Your weeklies are available. I expect motion, not another week of decorative paralysis in Limsa.",
+        "A new week begins. Do make some modest effort toward usefulness.",
+        "Your weekly duties await. I would not call them enjoyable, but then neither are you.",
+        "Your weeklies are up. How charming that Eorzea still believes in your potential.",
+    ],
+    where="the weekly reset post, Tuesdays",
+)
 
 
 # How many recently used lines to remember and avoid reusing.
@@ -282,7 +292,7 @@ class FFXIVResets(commands.Cog):
             return
 
         daily_line, self.state.recent_daily_lines = pick_line(
-            DAILY_LINES, self.state.recent_daily_lines, DAILY_LINE_MEMORY
+            lines.pool("resets.daily"), self.state.recent_daily_lines, DAILY_LINE_MEMORY
         )
 
         for guild in self.bot.guilds:
@@ -315,7 +325,7 @@ class FFXIVResets(commands.Cog):
             return
 
         weekly_line, self.state.recent_weekly_lines = pick_line(
-            WEEKLY_LINES, self.state.recent_weekly_lines, WEEKLY_LINE_MEMORY
+            lines.pool("resets.weekly"), self.state.recent_weekly_lines, WEEKLY_LINE_MEMORY
         )
 
         for guild in self.bot.guilds:
@@ -416,10 +426,10 @@ class FFXIVResets(commands.Cog):
 
         if kind.value == "daily":
             title = "☀️ Daily Reset (FFXIV)"
-            body = random.choice(DAILY_LINES)
+            body = lines.pick("resets.daily")
         else:
             title = "🗓️ Weekly Reset (FFXIV)"
-            body = random.choice(WEEKLY_LINES)
+            body = lines.pick("resets.weekly")
 
         await self._post_embed(
             interaction.guild,

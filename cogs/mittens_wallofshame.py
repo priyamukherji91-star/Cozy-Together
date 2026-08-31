@@ -3,6 +3,8 @@ import re
 import random
 import textwrap
 import discord
+
+from common import lines
 from discord.ext import commands
 from discord import app_commands
 
@@ -12,38 +14,43 @@ WALL_CHANNEL_NAME = "wall-of-shame"     # fallback by name
 FRESH_MEAT_ROLE_ID = 1435680183700160662
 
 # ── FOOTER LINES (Mittens’ judgments) ───────────────────────────────
-MITTENS_TAUNTS = [
-    # Playfully menacing
-    "Next time, try using your brain before your keyboard.",
-    "Mittens has judged your message. Verdict: cringe.",
-    "You’ve been scratched into history.",
-    "The cat saw. The cat disapproved.",
-    "Confiscated by order of Mittens.",
-    "One meow closer to shame.",
-    "Mittens found this too funny not to share.",
-    "Shame fur you, pride for Mittens.",
-    "You post; Mittens exposes.",
-    "Mittens knocked this message off the table.",
-
-    # Mock-serious
-    "Recorded in the Annals of Embarrassment.",
-    "Another case closed in the Court of Mittens.",
-    "The defendant: guilty of posting that.",
-    "Officially documented by the Menace herself.",
-    "The jury of cats did not approve.",
-    "Filed under: what were you thinking.",
-    "Judgment delivered. Sentence: eternal meowmockery.",
-
-    # Meme / sass
-    "Bro thought this was a good idea 💀",
-    "You posted that?",
-    "Instant regret. Courtesy of Mittens.",
-    "Caught lacking in 4K.",
-    "Shame speedrun completed.",
-    "Mittens clipped this for evidence.",
-    "Should’ve stayed in drafts.",
-    "The audacity is purring.",
-]
+MITTENS_TAUNTS: tuple[str, ...] = lines.register(
+    "shame.taunts",
+    "Wall of shame footers",
+    [
+        # Playfully menacing
+        "Next time, try using your brain before your keyboard.",
+        "Mittens has judged your message. Verdict: cringe.",
+        "You’ve been scratched into history.",
+        "The cat saw. The cat disapproved.",
+        "Confiscated by order of Mittens.",
+        "One meow closer to shame.",
+        "Mittens found this too funny not to share.",
+        "Shame fur you, pride for Mittens.",
+        "You post; Mittens exposes.",
+        "Mittens knocked this message off the table.",
+    
+        # Mock-serious
+        "Recorded in the Annals of Embarrassment.",
+        "Another case closed in the Court of Mittens.",
+        "The defendant: guilty of posting that.",
+        "Officially documented by the Menace herself.",
+        "The jury of cats did not approve.",
+        "Filed under: what were you thinking.",
+        "Judgment delivered. Sentence: eternal meowmockery.",
+    
+        # Meme / sass
+        "Bro thought this was a good idea 💀",
+        "You posted that?",
+        "Instant regret. Courtesy of Mittens.",
+        "Caught lacking in 4K.",
+        "Shame speedrun completed.",
+        "Mittens clipped this for evidence.",
+        "Should’ve stayed in drafts.",
+        "The audacity is purring.",
+    ],
+    where="the footer under a shamed message",
+)
 
 MESSAGE_LINK_RE = re.compile(
     r"https?://(?:ptb\.|canary\.)?discord(?:app)?\.com/channels/\d+/(\d+)/(\d+)"
@@ -72,7 +79,7 @@ def emphasize_block(text: str) -> str:
     return f"```\n{trimmed}\n```"
 
 def random_taunt(name: str | None = None) -> str:
-    return random.choice(MITTENS_TAUNTS).replace("{name}", name or "this one")
+    return lines.pick("shame.taunts").replace("{name}", name or "this one")
 
 def build_embed(msg: discord.Message, footer_text: str, reporter_name: str | None = None) -> discord.Embed:
     desc_parts = []

@@ -23,6 +23,8 @@ from datetime import timedelta
 
 import discord
 from discord.ext import commands
+
+from common import lines
 from discord import app_commands
 
 # ──────────────────────────────────────────────────────────────
@@ -33,17 +35,22 @@ GHOUL_ROLE_NAME    = "Ghoul"
 BLOCKED_ROLE_NAMES = {"Fresh Meat"}
 COZY_GREMLINS_ROLE_ID = 1425978340304621769
 
-TIMEOUT_LINES = [
-    "Mittens has placed {user} in the corner for {duration}. Think about your life choices.",
-    "{user} has been benched for {duration}. The claws were faster.",
-    "Shhh… {user} is in cool-down mode for {duration} 💤",
-    "{user} triggered the paw of justice. {duration} in the box.",
-    "{user} poked the wrong cat. {duration} of silence awarded 🐾",
-    "{user} was too loud. Mittens muted them for {duration} ⏰",
-    "{user} has been bonked by Mittens’ paw. {duration} penalty applied.",
-    "{user} tried to meow over Mittens. {duration} time-out imposed 😾",
-    "Mittens has spoken. {user} will serve {duration} in timeout purgatory.",
-]
+TIMEOUT_LINES: tuple[str, ...] = lines.register(
+    "moderation.timeout",
+    "Timeout announcements",
+    [
+        "Mittens has placed {user} in the corner for {duration}. Think about your life choices.",
+        "{user} has been benched for {duration}. The claws were faster.",
+        "Shhh… {user} is in cool-down mode for {duration} 💤",
+        "{user} triggered the paw of justice. {duration} in the box.",
+        "{user} poked the wrong cat. {duration} of silence awarded 🐾",
+        "{user} was too loud. Mittens muted them for {duration} ⏰",
+        "{user} has been bonked by Mittens’ paw. {duration} penalty applied.",
+        "{user} tried to meow over Mittens. {duration} time-out imposed 😾",
+        "Mittens has spoken. {user} will serve {duration} in timeout purgatory.",
+    ],
+    where="the public line when somebody is timed out",
+)
 
 # ──────────────────────────────────────────────────────────────
 # HELPERS
@@ -182,7 +189,7 @@ class MittensModeration(commands.Cog):
             return await _deny(interaction, "Could not timeout that member (role hierarchy or permissions).")
 
         # Public roast (kept)
-        line = random.choice(TIMEOUT_LINES).format(user=user.mention, duration=format_duration(td))
+        line = lines.pick("moderation.timeout").format(user=user.mention, duration=format_duration(td))
         try:
             await interaction.channel.send(line)  # type: ignore
         except Exception:

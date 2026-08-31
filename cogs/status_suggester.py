@@ -242,7 +242,12 @@ class StatusSuggester(commands.Cog):
         name="status_ideas",
         description="Generate fresh Mittens status suggestions in the test channel.",
     )
-    async def status_ideas(self, interaction: discord.Interaction) -> None:
+    @app_commands.describe(
+        private="Show them to you alone, in a block you can copy, instead of posting them."
+    )
+    async def status_ideas(
+        self, interaction: discord.Interaction, private: bool = False
+    ) -> None:
         if not interaction.guild or not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message("Guild only.", ephemeral=True)
             return
@@ -253,8 +258,12 @@ class StatusSuggester(commands.Cog):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
 
+        # `private` is what the staff panel presses: ideas are a shortlist to
+        # pick through, and a shortlist posted in a channel is one somebody has
+        # to scroll back for. Sent to you alone, in a code block, they paste
+        # straight into the lines editor.
         output_channel = interaction.guild.get_channel(OUTPUT_CHANNEL_ID)
-        if not isinstance(output_channel, discord.TextChannel):
+        if not isinstance(output_channel, discord.TextChannel) and not private:
             await interaction.followup.send("Output channel not found.", ephemeral=True)
             return
 
@@ -276,6 +285,15 @@ class StatusSuggester(commands.Cog):
             f"Pulled from the last {LOOKBACK_DAYS} days in the configured channels.\n"
             f"Used {len(lines)} cleaned chat lines.\n\n"
         )
+
+        if private:
+            # One per line and nothing else inside the fence, so a copy is a
+            # paste — bullets and bold would come along with it.
+            block = "\n".join(ideas)
+            note = header + "```\n" + block[: MAX_OUTPUT_LENGTH - len(header) - 16] + "\n```"
+            await interaction.followup.send(note, ephemeral=True)
+            return
+
         body = "\n".join(f"• {idea}" for idea in ideas)
         message = header + body
         if len(message) > MAX_OUTPUT_LENGTH:

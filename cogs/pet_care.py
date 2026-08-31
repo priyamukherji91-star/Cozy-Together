@@ -38,6 +38,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from common import lines
 from petcare import pet_profile, pet_registry, pet_treats, storage
 
 log = logging.getLogger(__name__)
@@ -180,19 +181,24 @@ EMBED_COLOUR = discord.Colour(0xE0708A)
 MENTIONS = discord.AllowedMentions(users=True, roles=False, everyone=False)
 
 # He is a cat, and you are feeding other animals in front of him.
-FEED_LINES: tuple[str, ...] = (
-    "{pet} accepts your offering. {pet} has never once thanked me for anything.",
-    "Fed. I notice you walked straight past me to do it.",
-    "{pet} is delighted. {pet} is delighted by everything. It means nothing.",
-    "You gave that to {pet}. I was here first, you know.",
-    "{pet} ate it without chewing. No appreciation. No ceremony.",
-    "A {treat} for {pet}, then. I'll remember this.",
-    "{pet} looks up at you like you invented food. Embarrassing, for both of you.",
-    "Consider {pet} fed. Consider me watching.",
-    "{pet} has taken the {treat} and offered nothing in return. Learn from them.",
-    "Fine. Feed {pet}. See if I care. I don't. Obviously.",
-    "{pet} accepted. I could have accepted. Nobody asked me.",
-    "That's twice now you've chosen {pet} over the cat who lives in your notifications.",
+FEED_LINES: tuple[str, ...] = lines.register(
+    "pets.feed",
+    "Pet feeding",
+    (
+        "{pet} accepts your offering. {pet} has never once thanked me for anything.",
+        "Fed. I notice you walked straight past me to do it.",
+        "{pet} is delighted. {pet} is delighted by everything. It means nothing.",
+        "You gave that to {pet}. I was here first, you know.",
+        "{pet} ate it without chewing. No appreciation. No ceremony.",
+        "A {treat} for {pet}, then. I'll remember this.",
+        "{pet} looks up at you like you invented food. Embarrassing, for both of you.",
+        "Consider {pet} fed. Consider me watching.",
+        "{pet} has taken the {treat} and offered nothing in return. Learn from them.",
+        "Fine. Feed {pet}. See if I care. I don't. Obviously.",
+        "{pet} accepted. I could have accepted. Nobody asked me.",
+        "That's twice now you've chosen {pet} over the cat who lives in your notifications.",
+    ),
+    where="the line under a fed pet",
 )
 
 # A default favourite rather than a hardcoded rule: any pet called Donny gets a
@@ -202,19 +208,24 @@ FISHCAKE_PET_NAMES = frozenset({"donny"})
 
 # Same register as the feed lines: he is a cat, and you are on the floor with
 # somebody else's animal.
-PLAY_LINES: tuple[str, ...] = (
-    "{pet} has the {toy}. {pet} has always had the {toy}. Nobody plays with me.",
-    "You threw the {toy}. {pet} brought it back. I would not have.",
-    "Fine. Play with {pet}. I'll be here. Counting.",
-    "{pet} is exhausted and delighted. I am neither, since you didn't ask.",
-    "That's my {toy}, actually. It was. It isn't now.",
-    "{pet} thinks you're wonderful. {pet} also thinks a paper bag is wonderful.",
-    "Ten minutes with a {toy} and {pet} adores you. Cheap, isn't it.",
-    "Careful with {pet}. I remember who plays and who watches.",
-    "{pet} won. {pet} always wins. I'd have let you win.",
-    "You're on the floor for {pet} and I'm expected to find that normal.",
-    "{pet} has the {toy} and the undivided attention. I had neither, all week.",
-    "Enjoy the {toy}, {pet}. I'll enjoy remembering this.",
+PLAY_LINES: tuple[str, ...] = lines.register(
+    "pets.play",
+    "Pet playing",
+    (
+        "{pet} has the {toy}. {pet} has always had the {toy}. Nobody plays with me.",
+        "You threw the {toy}. {pet} brought it back. I would not have.",
+        "Fine. Play with {pet}. I'll be here. Counting.",
+        "{pet} is exhausted and delighted. I am neither, since you didn't ask.",
+        "That's my {toy}, actually. It was. It isn't now.",
+        "{pet} thinks you're wonderful. {pet} also thinks a paper bag is wonderful.",
+        "Ten minutes with a {toy} and {pet} adores you. Cheap, isn't it.",
+        "Careful with {pet}. I remember who plays and who watches.",
+        "{pet} won. {pet} always wins. I'd have let you win.",
+        "You're on the floor for {pet} and I'm expected to find that normal.",
+        "{pet} has the {toy} and the undivided attention. I had neither, all week.",
+        "Enjoy the {toy}, {pet}. I'll enjoy remembering this.",
+    ),
+    where="the line under a pet you played with",
 )
 
 # ── the evening nudge ─────────────────────────────────────────────────────────
@@ -225,19 +236,24 @@ PLAY_LINES: tuple[str, ...] = (
 # No gendered pronouns anywhere in here: a pet has a name, a species and a photo,
 # and nothing that says whether it's a he or a she. Guessing from the photo is
 # not something a bot gets to do.
-NUDGE_LINES: tuple[str, ...] = (
-    "I am waiting you know? Wtf my bowl is empty?????",
-    "Either you feed me or it's the furniture that's gonna suffer, just saying.",
-    "My bowl??? I am checking but there's nothing, hello??",
-    "Not one single person. Not ONE. I'm normal about it though.",
-    "I'm not mad, I'm just gonna sit here and stare at you. All night. Hope that's fine.",
-    "Everyone's online. Nobody's feeding me. Make it make sense.",
-    "Genuinely so rude. I've done nothing but be perfect all day.",
-    "Ok so we're just not eating today?? Cool. Cool cool cool.",
-    "I've been patient for HOURS. That's like a year for me. Feed me.",
-    "The bowl is empty and honestly? I'm taking it personally.",
-    "Somebody walked past me twice. TWICE. And did nothing.",
-    "This is a hostage situation and I am the hostage.",
+NUDGE_LINES: tuple[str, ...] = lines.register(
+    "pets.nudge",
+    "Hungry-pet nudge",
+    (
+        "I am waiting you know? Wtf my bowl is empty?????",
+        "Either you feed me or it's the furniture that's gonna suffer, just saying.",
+        "My bowl??? I am checking but there's nothing, hello??",
+        "Not one single person. Not ONE. I'm normal about it though.",
+        "I'm not mad, I'm just gonna sit here and stare at you. All night. Hope that's fine.",
+        "Everyone's online. Nobody's feeding me. Make it make sense.",
+        "Genuinely so rude. I've done nothing but be perfect all day.",
+        "Ok so we're just not eating today?? Cool. Cool cool cool.",
+        "I've been patient for HOURS. That's like a year for me. Feed me.",
+        "The bowl is empty and honestly? I'm taking it personally.",
+        "Somebody walked past me twice. TWICE. And did nothing.",
+        "This is a hostage situation and I am the hostage.",
+    ),
+    where="the 9pm hungry-pet post",
 )
 
 # Only offered when the profile has a favourite treat to name. There is
@@ -275,14 +291,19 @@ NUDGE_ASIDES: tuple[str, ...] = (
 
 
 # One line for the whole selection, in place of the same joke six times over.
-MULTI_FEED_LINES: tuple[str, ...] = (
-    "You went straight down the line without looking at me once.",
-    "All {n} of them. Not one of you thought to ask whether I'd eaten.",
-    "{n} animals, handed out like it costs you nothing. I notice these things.",
-    "A full round. I'll be here, remembered by nobody.",
-    "{n} at once. Efficient. Cold, but efficient.",
-    "You've made {n} creatures very happy and one cat extremely aware of it.",
-    "{n} of them fed in a single motion. I hope somebody was counting.",
+MULTI_FEED_LINES: tuple[str, ...] = lines.register(
+    "pets.multifeed",
+    "Feeding several pets",
+    (
+        "You went straight down the line without looking at me once.",
+        "All {n} of them. Not one of you thought to ask whether I'd eaten.",
+        "{n} animals, handed out like it costs you nothing. I notice these things.",
+        "A full round. I'll be here, remembered by nobody.",
+        "{n} at once. Efficient. Cold, but efficient.",
+        "You've made {n} creatures very happy and one cat extremely aware of it.",
+        "{n} of them fed in a single motion. I hope somebody was counting.",
+    ),
+    where="feeding more than one pet at once",
 )
 
 # The panel's footer line, by state. He is a cat, watching other animals be fed.
@@ -304,10 +325,15 @@ PANEL_LINES: dict[str, tuple[str, ...]] = {
     ),
 }
 
-FAVOURITE_LINES: tuple[str, ...] = (
-    "🏆 {user} is now **{pet}**'s favourite human. Sickening.",
-    "🏆 {pet} has transferred their affections to {user}.",
-    "🏆 {user} has bought **{pet}**'s loyalty outright. It was cheaper than you'd think.",
+FAVOURITE_LINES: tuple[str, ...] = lines.register(
+    "pets.favourite",
+    "A pet's new favourite",
+    (
+        "🏆 {user} is now **{pet}**'s favourite human. Sickening.",
+        "🏆 {pet} has transferred their affections to {user}.",
+        "🏆 {user} has bought **{pet}**'s loyalty outright. It was cheaper than you'd think.",
+    ),
+    where="when a pet picks a favourite treat",
 )
 
 T = TypeVar("T")
@@ -333,6 +359,30 @@ def admin_only() -> Callable[[T], T]:
     def check(interaction: discord.Interaction) -> bool:
         if _is_admin(interaction.user):
             return True
+        raise app_commands.CheckFailure("You do not have permission to use this command.")
+
+    return app_commands.check(check)
+
+
+def panel_staff_only() -> Callable[[T], T]:
+    """The owner, or anyone the staff panel opens for.
+
+    `/pettreats` refills the caller's own allowance and nobody else's, which is
+    what makes it safe to hand to the staff who test the feeding — waiting for
+    midnight to try a change is not testing. The panel is asked rather than
+    told: one definition of "staff", in one file, and this follows it when it
+    moves. A missing panel falls back to the owner alone.
+    """
+    def check(interaction: discord.Interaction) -> bool:
+        if interaction.user.id == OWNER_USER_ID:
+            return True
+        try:
+            from cogs.admin_panel import may_open  # noqa: PLC0415
+        except Exception:
+            may_open = None  # type: ignore[assignment]
+        if may_open is not None and isinstance(interaction.user, discord.Member):
+            if may_open(interaction.user):
+                return True
         raise app_commands.CheckFailure("You do not have permission to use this command.")
 
     return app_commands.check(check)
@@ -927,7 +977,7 @@ def _nudge_line(pet: pet_registry.Pet, days: int | None, recent: list[str]) -> s
         pool += [line.format(n=days) for line in NUDGE_DAYS_LINES]
     if pet.treat:
         pool += [line.format(treat=pet.treat) for line in NUDGE_TREAT_LINES]
-    pool += list(NUDGE_LINES)
+    pool += lines.pool("pets.nudge")
 
     fresh = [line for line in pool if line not in recent]
     return random.choice(fresh or pool)
@@ -2145,10 +2195,10 @@ class PetCare(commands.Cog):
     @app_commands.command(
         name="pettreats", description="Give yourself today's treats back 🍬"
     )
-    @owner_only()
+    @panel_staff_only()
     async def pettreats_cmd(self, interaction: discord.Interaction) -> None:
         """Refill your own allowance, for testing the feeding without waiting
-        for midnight. Owner rung, and it only ever touches the caller's own
+        for midnight. Staff rung, and it only ever touches the caller's own
         record — there is no version of this that hands somebody else treats."""
         if interaction.guild is None:
             return await interaction.response.send_message(
@@ -2597,7 +2647,7 @@ class PetCare(commands.Cog):
             title=f"🍖 You fed {len(fed_pets)} pets",
             description=(
                 f"{interaction.user.mention} — "
-                + rng.choice(MULTI_FEED_LINES).format(n=len(fed_pets))
+                + rng.choice(lines.pool("pets.multifeed")).format(n=len(fed_pets))
             ),
             colour=EMBED_COLOUR,
         )
@@ -2617,7 +2667,7 @@ class PetCare(commands.Cog):
             embed.add_field(
                 name="​",
                 value="\n".join(
-                    rng.choice(FAVOURITE_LINES).format(
+                    rng.choice(lines.pool("pets.favourite")).format(
                         user=interaction.user.mention, pet=name
                     )
                     for name in crowned
@@ -2713,7 +2763,7 @@ class PetCare(commands.Cog):
         # Stable per pet, per feeder, per day, the same way ship scores are.
         rng = random.Random(f"{record.pet_id}-{interaction.user.id}-{_today()}")
         given = result.treat or "treat"
-        line = rng.choice(FEED_LINES).format(pet=record.name, treat=given)
+        line = rng.choice(lines.pool("pets.feed")).format(pet=record.name, treat=given)
 
         embed = discord.Embed(
             title=(
@@ -2736,7 +2786,7 @@ class PetCare(commands.Cog):
         if result.new_favourite:
             embed.add_field(
                 name="​",
-                value=rng.choice(FAVOURITE_LINES).format(
+                value=rng.choice(lines.pool("pets.favourite")).format(
                     user=interaction.user.mention, pet=record.name
                 ),
                 inline=False,
@@ -3241,7 +3291,7 @@ class PetCare(commands.Cog):
 
         rng = random.Random(f"play-{record.pet_id}-{interaction.user.id}-{_today()}")
         toy = result.toy or "toy"
-        line = rng.choice(PLAY_LINES).format(pet=record.name, toy=toy)
+        line = rng.choice(lines.pool("pets.play")).format(pet=record.name, toy=toy)
 
         embed = discord.Embed(
             title=(

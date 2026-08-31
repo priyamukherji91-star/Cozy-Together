@@ -1,6 +1,7 @@
 # cogs/onboarding.py
 # -*- coding: utf-8 -*-
 
+import logging
 from dataclasses import dataclass, asdict, fields
 from typing import Optional
 
@@ -9,6 +10,8 @@ from discord.ext import commands
 from discord import app_commands
 
 from common import storage
+
+LOG = logging.getLogger("cozy.onboarding")
 
 # ── IDs ───────────────────────────────────────────────────────────
 GUILD_ID = 1425974791516586045
@@ -272,17 +275,25 @@ class WelcomeSetup(commands.Cog):
         self.bot = bot
         self.config = RoleMessageConfig.load()
 
-    @app_commands.command(name="setup_roles", description="Post all role selection messages in get-roles.")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def setup_roles(self, interaction: discord.Interaction):
-        if interaction.guild is None:
-            return await interaction.response.send_message("Guild only.", ephemeral=True)
+    async def post_role_menus(self, guild: discord.Guild):
+        """Post the four role menus in get-roles, replacing the last set.
 
-        channel = interaction.guild.get_channel(GET_ROLES_CHANNEL_ID)
+        The previous four are deleted by the ids the config already stores, so
+        pressing this twice leaves four menus rather than eight — the old ones
+        keep working, but only one set is the one being maintained, and a member
+        cannot tell them apart. Anything the ids no longer point at is left
+        alone: a message somebody deleted by hand is not an error.
+        """
+        channel = guild.get_channel(GET_ROLES_CHANNEL_ID)
         if not isinstance(channel, discord.TextChannel):
-            return await interaction.response.send_message("❌ get-roles channel not found.", ephemeral=True)
+            return None
 
-        await interaction.response.send_message("⏳ Posting role messages…", ephemeral=True)
+        stale = [
+            self.config.pronouns_message_id,
+            self.config.server_message_id,
+            self.config.dms_message_id,
+            self.config.activity_message_id,
+        ]
 
         # Pronouns
         p_embed = discord.Embed(
@@ -326,6 +337,78 @@ class WelcomeSetup(commands.Cog):
         self.config.dms_message_id = d_msg.id
         self.config.activity_message_id = a_msg.id
         self.config.save()
+
+        # Last, so a failure while posting never leaves the channel with none.
+        for message_id in stale:
+            if not message_id:
+                continue
+            try:
+                await (await channel.fetch_message(int(message_id))).delete()
+            except (discord.NotFound, discord.Forbidden):
+                pass
+            except Exception:
+                LOG.debug("could not clear old role menu %s", message_id, exc_info=True)
+        return channel
+
+    @app_commands.command(name="setup_roles", description="Post all role selection messages in get-roles.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def setup_roles(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            return await interaction.response.send_message("Guild only.", ephemeral=True)
+
+        await interaction.response.send_message("⏳ Posting role messages…", ephemeral=True)
+        channel = await self.post_role_menus(interaction.guild)
+        if channel is None:
+            return await interaction.edit_original_response(
+                content="❌ get-roles channel not found."
+            )
+        await interaction.edit_original_response(
+            content=f"✅ Role menus posted in {channel.mention}."
+        )
+
+    @app_commands.command(
+        name="setup_panels",
+        description="Repost the landing-zone gate and the get-roles menus, in their own channels.",
+    )
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def setup_panels(self, interaction: discord.Interaction):
+        """Both doors at once.
+
+        They are two commands in two cogs because they are two channels, but
+        they are one job — the way in — and doing half of it is how a landing
+        zone ends up pointing at role menus that are no longer there. The gate
+        is imported here rather than reached through its cog: `gatekeeper` may
+        not have loaded, and one door posted is better than an error.
+        """
+        if interaction.guild is None:
+            return await interaction.response.send_message("Guild only.", ephemeral=True)
+
+        await interaction.response.send_message("⏳ Reposting both…", ephemeral=True)
+        done: list[str] = []
+        failed: list[str] = []
+
+        roles_channel = await self.post_role_menus(interaction.guild)
+        (done if roles_channel else failed).append(
+            f"Role menus in {roles_channel.mention}" if roles_channel
+            else "get-roles channel not found"
+        )
+
+        try:
+            from cogs.gatekeeper import post_gate  # noqa: PLC0415
+
+            gate_channel = await post_gate(interaction.guild)
+        except Exception:
+            LOG.exception("could not post the gate")
+            gate_channel = None
+        (done if gate_channel else failed).append(
+            f"Gate in {gate_channel.mention}" if gate_channel
+            else "landing-zone gate could not be posted"
+        )
+
+        note = "\n".join(f"✅ {line}" for line in done)
+        if failed:
+            note += ("\n" if note else "") + "\n".join(f"❌ {line}" for line in failed)
+        await interaction.edit_original_response(content=note)
 
 
 async def setup(bot):
