@@ -6,13 +6,13 @@ tags: Developments, Done
 Mitten's Morning News was occasionally reporting things that never happened. Three causes, all fixed. The paper looks the same — it's just telling the truth now.
 
 **What was going wrong**
-• Images were the big one. When someone posted a picture, Mittens looked at it and wrote a description into her notes — but the note went in looking exactly like something that person had *said*. Post a meme about quitting your job and the paper could report that you quit your job.
+• Images were the big one. When someone posted a picture, Mittens looked at it and wrote a description into the notes — but the note went in looking exactly like something that person had *said*. Post a meme about quitting your job and the paper could report that you quit your job.
 • Lines from all seven channels were mixed together with no timestamps and no channel names, and quiet messages were dropped. Two unrelated lines could end up side by side, so Mittens joined them into one story about two people who had never spoken to each other.
 • The messages counter on the masthead was wrong in both directions — it skipped short messages, commands and links, and counted a picture as an extra message.
 
 **What changed**
-• Her notes now read `[14:32 #general] Name said: ...` or `[14:32 #general] Name posted an image: ...`, and she's told in plain terms that a meme is not a diary entry.
-• She's also told the notes have gaps and mix channels, so she can't assume two neighbouring lines are the same conversation.
+• The notes now read `[14:32 #general] Name said: ...` or `[14:32 #general] Name posted an image: ...`, and the instructions now say plainly that a meme is not a diary entry.
+• Mittens is also told the notes are filtered and mix channels, so neighbouring lines aren't assumed to be one conversation.
 • "X messages read" now means what it says.
 
 **Notes**
