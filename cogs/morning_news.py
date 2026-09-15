@@ -205,6 +205,28 @@ class MenaceCandidate:
 
 
 @dataclass
+class TranscriptEntry:
+    """One line of the transcript handed to the model.
+
+    `is_image` is load-bearing. A vision description used to be appended in exactly
+    the same shape as speech ("alice: A photo of a cat on a keyboard"), so the model
+    read a described meme as something the poster said or did — which is how the
+    paper ended up reporting events that never happened. The marker is what keeps
+    the two apart on the page the model actually reads.
+    """
+    when: datetime
+    author: str
+    channel: str
+    text: str
+    is_image: bool = False
+
+    def render(self, tz: ZoneInfo) -> str:
+        stamp = self.when.astimezone(tz).strftime("%H:%M")
+        verb = "posted an image" if self.is_image else "said"
+        return f"[{stamp} #{self.channel}] {self.author} {verb}: {self.text}"
+
+
+@dataclass
 class Story:
     """What the model returned, already cleaned and length-capped."""
     tease: str
@@ -412,13 +434,21 @@ def score_line(line: str) -> int:
     return score
 
 
-def choose_relevant_lines(lines: list[str], max_lines: int) -> list[str]:
-    if len(lines) <= max_lines:
-        return lines
-    scored = [(score_line(line), idx, line) for idx, line in enumerate(lines)]
+def choose_relevant_entries(
+    entries: list["TranscriptEntry"], max_lines: int
+) -> list["TranscriptEntry"]:
+    """Keep the most reportable entries, in chronological order.
+
+    Scores the message text alone. Scoring the rendered line instead would fold the
+    timestamp and channel name into the length term, quietly handing channels with
+    longer names a better chance of being printed.
+    """
+    if len(entries) <= max_lines:
+        return entries
+    scored = [(score_line(e.text), idx, e) for idx, e in enumerate(entries)]
     picked = sorted(scored, key=lambda x: (-x[0], x[1]))[:max_lines]
     picked.sort(key=lambda x: x[1])
-    return [line for _, _, line in picked]
+    return [entry for _, _, entry in picked]
 
 
 def split_embed_description(text: str, limit: int = 4096) -> str:
@@ -810,12 +840,22 @@ class MorningNews(commands.Cog):
         photo_bytes: bytes | None,
     ) -> "NewspaperContent":
         issue_no = max(1, (now.date() - PAPER_EPOCH).days + 1)
-        volume = max(1, now.year - PAPER_EPOCH.year + 1)
+        # Counted from the epoch anniversary. Using the calendar year rolled the volume
+        # on 1 January, which put Vol. 2 three months before the first year was out.
+        volume = max(1, (now.date() - PAPER_EPOCH).days // 365 + 1)
 
         photo_label = ""
         if photo_bytes is not None and menace is not None:
+            # 'photograph by' overclaimed: the picker takes any uploaded still, so the
+            # menace is often a screenshot or a meme rather than a photo someone took.
             # author_name is escaped for embeds; the page is not markdown.
-            photo_label = f"Menace of the day · photograph by {unescape_markdown(menace.author_name)}"
+            credit = f"Menace of the day · posted by {unescape_markdown(menace.author_name)}"
+            # Reprints reach back up to MENACE_DEEP_LOOKBACK_DAYS. Printing an old photo
+            # under today's dateline with no date reads as today's news.
+            posted = menace.posted_at.astimezone(TIMEZONE).date()
+            if posted != now.date():
+                credit += f" · posted {posted:%B} {posted.day}"
+            photo_label = credit
 
         return NewspaperContent(
             paper_name=PAPER_NAME,
@@ -1054,14 +1094,26 @@ class MorningNews(commands.Cog):
         start_time: datetime,
         end_time: datetime,
     ) -> tuple[list[str], dict[str, list[str]], int]:
-        collected: list[tuple[datetime, str, str]] = []
-        remaining_image_budget = MAX_NEWS_IMAGES_ANALYZED if self.client else 0
+        """Read the source channels and return (transcript lines, per-author messages,
+        messages read).
 
+        Two passes on purpose. Reading history is free, describing an image costs an
+        API call, and the budget used to be spent in channel order — so a busy first
+        channel ate all ten and every later channel went blind. Pass one reads
+        everything, pass two spends the budget round-robin across the channels that
+        actually have images.
+        """
+        entries: list[TranscriptEntry] = []
+        pending: list[list[tuple[discord.Message, str, str, str]]] = []
+        messages_read = 0
+
+        # ── Pass 1: history only, no API calls ────────────────
         for channel_id in SOURCE_CHANNEL_IDS:
             channel = self.bot.get_channel(channel_id)
             if not isinstance(channel, discord.TextChannel):
                 continue
 
+            channel_queue: list[tuple[discord.Message, str, str, str]] = []
             try:
                 async for msg in channel.history(limit=2000, after=start_time, oldest_first=True):
                     if msg.created_at > end_time:
@@ -1069,28 +1121,23 @@ class MorningNews(commands.Cog):
                     if msg.author.bot:
                         continue
 
-                    cleaned = clean_message_content(msg)
-                    image_notes: list[str] = []
-
-                    if remaining_image_budget > 0:
-                        urls = message_image_urls(msg)[:MAX_NEWS_IMAGES_PER_MESSAGE]
-                        for image_url in urls:
-                            if remaining_image_budget <= 0:
-                                break
-                            note = await self.describe_news_image(msg, image_url)
-                            remaining_image_budget -= 1
-                            if note:
-                                image_notes.append(note)
-
-                    if not cleaned and not image_notes:
-                        continue
+                    # Every human message in the window counts as read, whether or not
+                    # it survives cleaning — the masthead claims messages, not lines.
+                    messages_read += 1
 
                     author_name = discord.utils.escape_markdown(msg.author.display_name, as_needed=True)
-
+                    cleaned = clean_message_content(msg)
                     if cleaned:
-                        collected.append((msg.created_at, author_name, cleaned))
-                    for note in image_notes:
-                        collected.append((msg.created_at, author_name, note))
+                        entries.append(TranscriptEntry(
+                            when=msg.created_at,
+                            author=author_name,
+                            channel=channel.name,
+                            text=cleaned,
+                        ))
+
+                    if self.client:
+                        for image_url in message_image_urls(msg)[:MAX_NEWS_IMAGES_PER_MESSAGE]:
+                            channel_queue.append((msg, image_url, author_name, channel.name))
 
             except discord.Forbidden:
                 continue
@@ -1098,17 +1145,45 @@ class MorningNews(commands.Cog):
                 LOG.exception("Unexpected error reading history for channel %s", channel_id)
                 continue
 
-        collected.sort(key=lambda item: item[0])
+            if channel_queue:
+                pending.append(channel_queue)
 
+        # ── Pass 2: spend the image budget fairly ─────────────
+        budget = MAX_NEWS_IMAGES_ANALYZED if self.client else 0
+        cursor = 0
+        while budget > 0 and pending:
+            # Index, not list.remove(): remove() matches by value, and two drained
+            # queues both compare equal to [].
+            cursor %= len(pending)
+            queue = pending[cursor]
+            msg, image_url, author_name, channel_name = queue.pop(0)
+            if queue:
+                cursor += 1
+            else:
+                del pending[cursor]
+
+            note = await self.describe_news_image(msg, image_url)
+            budget -= 1
+            if note:
+                entries.append(TranscriptEntry(
+                    when=msg.created_at,
+                    author=author_name,
+                    channel=channel_name,
+                    text=note,
+                    is_image=True,
+                ))
+
+        entries.sort(key=lambda e: e.when)
+
+        # Only real messages count toward a person's tally; an image description is
+        # something the camera said, not something they did.
         grouped: dict[str, list[str]] = defaultdict(list)
-        lines = []
+        for entry in entries:
+            if not entry.is_image:
+                grouped[entry.author].append(entry.text)
 
-        for _, author_name, cleaned in collected:
-            grouped[author_name].append(cleaned)
-            lines.append(f"{author_name}: {cleaned}")
-
-        lines = choose_relevant_lines(lines, MAX_TRANSCRIPT_LINES)
-        return lines, dict(grouped), len(collected)
+        kept = choose_relevant_entries(entries, MAX_TRANSCRIPT_LINES)
+        return [e.render(TIMEZONE) for e in kept], dict(grouped), messages_read
 
     async def describe_news_image(self, message: discord.Message, image_url: str) -> str | None:
         if not self.client:
@@ -1199,8 +1274,8 @@ class MorningNews(commands.Cog):
             "- Make people sound like they are losing to ordinary things — sleep, reading "
             "comprehension, impulse control, money, timing, consequences — wherever that actually "
             "fits what happened. Never invent a loss that isn't in the transcript.\n"
-            "- Some transcript lines come from image or screenshot analysis; treat them as normal "
-            "context.\n\n"
+            "- Report only what the transcript supports. If you are not sure two lines are "
+            "about the same thing, they are not.\n\n"
             "SENTENCE CRAFT:\n"
             "- Vary sentence shape. Do not open every section the same way and do not run three "
             "sentences of the same length back to back.\n"
@@ -1226,6 +1301,18 @@ class MorningNews(commands.Cog):
 
         user_prompt = (
             "Turn this cleaned public transcript into today's front page.\n\n"
+            "TRANSCRIPT FORMAT — read this before you use it:\n"
+            "- Every line is '[HH:MM #channel] Name said: text' or "
+            "'[HH:MM #channel] Name posted an image: description'.\n"
+            "- A 'posted an image' line is a machine description of a picture they posted. It "
+            "is NOT something they said, and the content of a meme or screenshot is NOT a claim "
+            "about their own life. Someone posting a picture of a wedding did not get married.\n"
+            "- The transcript is a filtered selection, not a full log. Lines have been dropped "
+            "between the ones you can see.\n"
+            "- Lines from different channels are interleaved by time. Two adjacent lines are "
+            "only part of the same conversation if the channel matches and the timestamps are "
+            "close. Otherwise they are unrelated and must not be joined into one story.\n"
+            "- Do not print timestamps or channel names in your copy; they are context for you.\n\n"
             "STRUCTURE — this is printed as a newspaper, so the shape is fixed:\n"
             f"- Return exactly {SECTION_COUNT} sections. The FIRST is the lead story; the other "
             f"{BRIEF_COUNT} are short briefs. Anything beyond that is written and then dropped, so "
@@ -1251,7 +1338,9 @@ class MorningNews(commands.Cog):
             "- Do not target gender, sexuality, race, ethnicity, religion, disability, identity, "
             "body, real trauma, or anything too personal.\n"
             "- Do not invent events, relationships, accusations, or motivations not in the "
-            "transcript.\n\n"
+            "transcript. No inferring what someone meant, felt, or did off-screen.\n"
+            "- Attribute only to the person on the line. Never merge two people into one "
+            "incident because their lines happen to sit next to each other.\n\n"
             "Transcript:\n"
             f"{transcript}"
         )
