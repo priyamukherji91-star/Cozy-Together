@@ -107,8 +107,9 @@ explained.
   it in the channel afterwards.
 - **Species** is the only one of the three bio boxes you have to fill in — it's
   what draws their icon on the panel.
-- **Favourite toy** and **what they're like** are the two that don't fit in
-  five; they're on the ✨ button straight after, and on 🐾 Manage my pets.
+- **Favourite toy** and **Personality** are the two that don't fit — Discord
+  caps a pop-up at five boxes and the photo and the name take two of them.
+  They're on the ✨ button straight after, and on 🐾 Manage my pets.
 
 **2. `/pet add`** — the same thing as a command, in the pet channel.
 
@@ -127,8 +128,10 @@ explained.
 - **Use a message with only one photo in it.** If you posted several at once,
   the bot takes the first one and there's no way to pick a different one.
 
-Straight after registering you get an **✨ Add what they're like** button, which
-opens the full bio form. You can skip it and do it later from 🐾 Manage my pets.
+Straight after registering you get an **✨ Finish their bio** button, which
+opens the whole form with what you just typed already in it — that's where the
+boxes that didn't fit get filled. The reply names the ones still blank. You can
+skip it and do it later from 🐾 Manage my pets.
 
 ### The rules
 
@@ -170,7 +173,7 @@ One form, five boxes, all optional:
 | **Born** | A year is enough — "2019" renders as *2019 · about 7*. |
 | **Favourite treat** | **They will always be fed this.** |
 | **Favourite toy** | **They will always be played with this.** |
-| **What are they like?** | Free text, several lines if you want. |
+| **Personality** | Free text, several lines if you want. |
 
 Edit it from 🐾 **Manage my pets** → ✏️ **Edit bio**. **Only the owner** can edit
 a bio, change the photo, or rename a pet — not mods. Mods can still *remove* a

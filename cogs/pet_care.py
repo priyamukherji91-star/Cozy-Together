@@ -1593,9 +1593,9 @@ class ClaimPetModal(discord.ui.Modal):
     """Registration from the right-click, which has to ask for the name too.
 
     A modal takes five inputs and the name is one of them, so this asks the four
-    short ones — see `pet_profile.SIGNUP`. "What are they like?" is offered on a
-    button immediately afterwards rather than making somebody write prose before
-    their pet exists.
+    short ones — see `pet_profile.SIGNUP`. "Personality" is offered on a button
+    immediately afterwards rather than making somebody write prose before their
+    pet exists.
     """
 
     def __init__(self, cog: "PetCare", image: discord.Attachment) -> None:
@@ -1671,9 +1671,10 @@ class PanelAddPetModal(discord.ui.Modal):
 
     **One pop-up, five components, which is Discord's cap.** A modal can carry a
     file upload as well as text now, so the photo is asked for here rather than
-    as a second step. Favourite toy and "What are they like?" are the two that
-    did not fit; they are on the ✨ button `_register` hands back, and on
-    🐾 Manage my pets after that.
+    as a second step. Favourite toy and Personality are the two that did not
+    fit — five is the cap, and the photo and the name take two of it. They are on
+    the ✨ button `_register` hands back, which opens this same profile with
+    every box on it, and on 🐾 Manage my pets after that.
 
     The write itself goes through `_register`, the same as every other route.
     """
@@ -1751,15 +1752,19 @@ class PanelAddPetModal(discord.ui.Modal):
 
 
 class MoreDetailsView(discord.ui.View):
-    """Offered right after registering, so the character half is one click away
-    rather than something you have to go and find later."""
+    """The rest of the bio, one click after registering.
+
+    A modal takes five components and no route has five to spare, so every way
+    in leaves a box or two unasked. This is where they get asked — it opens the
+    whole profile, pre-filled with whatever the form just collected, so it
+    finishes a registration rather than starting a second chore."""
 
     def __init__(self, pet: pet_registry.Pet) -> None:
         super().__init__(timeout=600)
         self.pet = pet
 
         button = discord.ui.Button(
-            label="✨ Add what they're like", style=discord.ButtonStyle.primary
+            label="✨ Finish their bio", style=discord.ButtonStyle.primary
         )
         button.callback = self._open
         self.add_item(button)
@@ -2386,9 +2391,14 @@ class PetCare(commands.Cog):
         # No `/shippet` pointer here on purpose: shipping is gated to its own
         # channel, and advertising it from this one only sends people somewhere
         # the command refuses to run.
+        # Naming the empty boxes is the whole reason the button below is worth
+        # pressing: five components is Discord's cap on a form, so something is
+        # always left over, and "Still blank: …" is how somebody finds out which.
+        left = pet_profile.missing(pet)
+        note = f"\nStill blank: {', '.join(left)} — the button below adds them." if left else ""
         await interaction.followup.send(
             f"✅ **{pet.name}** is registered. Feed them from the panel in "
-            f"<#{PET_CARE_CHANNEL_ID}>.",
+            f"<#{PET_CARE_CHANNEL_ID}>.{note}",
             view=MoreDetailsView(pet),
             ephemeral=True,
         )

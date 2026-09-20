@@ -56,7 +56,7 @@ BIO: tuple[Field, ...] = (
     Field("toy", "Favourite toy", "a shoelace, the box the toy came in…"),
     Field(
         "known_for",
-        "What are they like?",
+        "Personality",
         "screaming at 4am · smug · clingy · deeply stupid",
         long=True,
         prefill=_about_prefill,
@@ -69,8 +69,8 @@ BIO: tuple[Field, ...] = (
 # `toy` are the two that actually drive something: a pet with a favourite is
 # always fed and played with it.
 #
-# "What are they like?" is the one left out. It is the long box, the one people
-# stall on, and the only one nothing mechanical reads — so it goes on the button
+# "Personality" is the one left out. It is the long box, the one people stall
+# on, and the only one nothing mechanical reads — so it goes on the button
 # offered straight after registering instead of standing between somebody and
 # their pet existing.
 SIGNUP: tuple[Field, ...] = BIO[:4]
@@ -80,10 +80,9 @@ SIGNUP: tuple[Field, ...] = BIO[:4]
 # its own, so the name and the picture take two of the five and these three get
 # the rest.
 #
-# `treat` earns the third over "What are they like?" because it is the one a
-# pet is fed with every single time, where the long box is the one people stall
-# on — and that one, with `toy`, is on the button offered the moment the pet
-# exists.
+# `treat` earns the third over `toy` and "Personality" because it is the one a
+# pet is fed with every single time. Those two are on the button offered the
+# moment the pet exists, which opens this same profile with every box on it.
 BASICS: tuple[Field, ...] = BIO[:3]
 
 # Written by an older two-box profile, never offered for editing again. Kept so
@@ -98,7 +97,9 @@ LABELS: dict[str, str] = {
     "born": "Born",
     "treat": "Favourite treat",
     "toy": "Favourite toy",
-    "known_for": "What they're like",
+    "known_for": "Personality",
+    # The old separate box, under the same heading — `rows` folds the two
+    # together so a pet that still carries both never prints it twice.
     "traits": "Personality",
 }
 
@@ -205,7 +206,10 @@ def rows(pet: pet_registry.Pet) -> list[tuple[str, str]]:
     """The filled-in fields as (label, value), in screen order. Empty ones vanish.
 
     Walks ALL_FIELDS rather than BIO so a pet still carrying the old separate
-    `traits` keeps showing it until somebody edits them.
+    `traits` keeps showing it until somebody edits them. Both of those now print
+    under **Personality**, so a pet with something in each gets one heading with
+    both lines under it rather than the same heading twice — which is what the
+    edit form does with them anyway, see `_about_prefill`.
     """
     out: list[tuple[str, str]] = []
     for field in ALL_FIELDS:
@@ -215,7 +219,11 @@ def rows(pet: pet_registry.Pet) -> list[tuple[str, str]]:
         if field.key == "born":
             age = age_from(value)
             value = f"{value} · {age}" if age else value
-        out.append((LABELS[field.key], value))
+        label = LABELS[field.key]
+        if out and out[-1][0] == label:
+            out[-1] = (label, f"{out[-1][1]}\n{value}")
+            continue
+        out.append((label, value))
     return out
 
 
@@ -225,7 +233,7 @@ def apply(embed: discord.Embed, pet: pet_registry.Pet, *, inline: bool = True) -
         embed.add_field(
             name=label,
             value=value[:1024],
-            inline=inline and label not in ("What they're like", "Personality"),
+            inline=inline and label != "Personality",
         )
     return embed
 

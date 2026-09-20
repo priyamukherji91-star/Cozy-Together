@@ -469,8 +469,8 @@ def _tidy(text: str) -> str:
     """Tidy whitespace without flattening the text.
 
     Runs of spaces collapse and blank lines close up, but newlines survive —
-    "What are they like?" is a paragraph box, and laying it out over a few lines
-    is the obvious thing to do.
+    Personality is a paragraph box, and laying it out over a few lines is the
+    obvious thing to do.
     """
     text = _RUNS_OF_SPACE.sub(" ", text)
     text = _BLANK_LINES.sub("\n", text)
