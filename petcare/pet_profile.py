@@ -75,10 +75,16 @@ BIO: tuple[Field, ...] = (
 # their pet existing.
 SIGNUP: tuple[Field, ...] = BIO[:4]
 
-# The two that survive when registration also has to ask for the photo — the
-# panel's ➕ button, which starts with nothing in hand. A file upload costs a
-# slot of its own, so the name and the picture take two of the five.
-BASICS: tuple[Field, ...] = BIO[:2]
+# What survives when registration also has to ask for the photo — the panel's
+# ➕ button, which starts with nothing in hand. A file upload costs a slot of
+# its own, so the name and the picture take two of the five and these three get
+# the rest.
+#
+# `treat` earns the third over "What are they like?" because it is the one a
+# pet is fed with every single time, where the long box is the one people stall
+# on — and that one, with `toy`, is on the button offered the moment the pet
+# exists.
+BASICS: tuple[Field, ...] = BIO[:3]
 
 # Written by an older two-box profile, never offered for editing again. Kept so
 # a pet nobody has edited since still shows what its owner wrote.

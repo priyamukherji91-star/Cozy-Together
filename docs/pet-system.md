@@ -103,12 +103,12 @@ they're at it — leave those blank if you like, they're editable forever after.
 explained.
 
 - One form, five boxes: the **photo**, the **name**, **species**, **born** and
-  **what they're like**. The photo is uploaded in the form — there is no
-  posting it in the channel afterwards.
+  **favourite treat**. The photo is uploaded in the form — there is no posting
+  it in the channel afterwards.
 - **Species** is the only one of the three bio boxes you have to fill in — it's
   what draws their icon on the panel.
-- **Favourite treat** and **favourite toy** are the two that don't fit in five;
-  they're on the ✨ button straight after, and on 🐾 Manage my pets.
+- **Favourite toy** and **what they're like** are the two that don't fit in
+  five; they're on the ✨ button straight after, and on 🐾 Manage my pets.
 
 **2. `/pet add`** — the same thing as a command, in the pet channel.
 

@@ -1671,8 +1671,8 @@ class PanelAddPetModal(discord.ui.Modal):
 
     **One pop-up, five components, which is Discord's cap.** A modal can carry a
     file upload as well as text now, so the photo is asked for here rather than
-    as a second step. Favourite treat and favourite toy are the two that did not
-    fit; they are on the ✨ button `_register` hands back, and on
+    as a second step. Favourite toy and "What are they like?" are the two that
+    did not fit; they are on the ✨ button `_register` hands back, and on
     🐾 Manage my pets after that.
 
     The write itself goes through `_register`, the same as every other route.
@@ -1699,7 +1699,7 @@ class PanelAddPetModal(discord.ui.Modal):
         # edit screen would be two names for one thing. Each one sits under a
         # `Label` because the upload above has no caption of its own and a form
         # mixing the two shapes is not something Discord promises to render.
-        for field in (*pet_profile.BASICS, pet_profile.BIO[4]):
+        for field in pet_profile.BASICS:
             box = discord.ui.TextInput(
                 placeholder=field.placeholder or None,
                 max_length=field.cap,
