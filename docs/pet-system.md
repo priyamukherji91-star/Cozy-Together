@@ -102,14 +102,16 @@ they're at it — leave those blank if you like, they're editable forever after.
 **1. ➕ Add a pet** — the button on the panel, and the one that needs nothing
 explained.
 
-- One form, five boxes: the **photo**, the **name**, **species**, **born** and
-  **favourite treat**. The photo is uploaded in the form — there is no posting
-  it in the channel afterwards.
-- **Species** is the only one of the three bio boxes you have to fill in — it's
-  what draws their icon on the panel.
-- **Favourite toy** and **Personality** are the two that don't fit — Discord
-  caps a pop-up at five boxes and the photo and the name take two of them.
-  They're on the ✨ button straight after, and on 🐾 Manage my pets.
+**Two pop-ups.** Discord caps a form at five boxes, and the photo and the name
+take two of them, so registering is a page 1 and a page 2.
+
+- **Page 1 of 2** — the **photo**, the **name**, **species**, **born** and
+  **favourite treat**. The photo is uploaded in the form itself; there is no
+  posting it in the channel afterwards. **Species** is the only bio box you have
+  to fill in — it's what draws their icon on the panel.
+- Submitting page 1 registers the pet. Nothing after this can lose them.
+- **Page 2 of 2** — press **✨ Next: 2 of 2** in the reply for **favourite toy**
+  and **Personality**. It only ever asks for the boxes still empty.
 
 **2. `/pet add`** — the same thing as a command, in the pet channel.
 
@@ -128,10 +130,10 @@ explained.
 - **Use a message with only one photo in it.** If you posted several at once,
   the bot takes the first one and there's no way to pick a different one.
 
-Straight after registering you get an **✨ Finish their bio** button, which
-opens the whole form with what you just typed already in it — that's where the
-boxes that didn't fit get filled. The reply names the ones still blank. You can
-skip it and do it later from 🐾 Manage my pets.
+Whichever route you use, the reply names what is still empty and offers a button
+that asks for exactly those boxes — **✨ Next: 2 of 2** from the panel, **✨ Finish
+their bio** from the other two. A route that collected everything offers no
+button at all. You can skip it and do it later from 🐾 Manage my pets.
 
 ### The rules
 

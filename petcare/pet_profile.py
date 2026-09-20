@@ -177,6 +177,39 @@ def bio_modal(save: Saver, pet: pet_registry.Pet | None = None):
     )
 
 
+def blank_fields(pet: pet_registry.Pet) -> tuple[Field, ...]:
+    """The BIO fields with nothing in them yet, in screen order.
+
+    BIO only — there is no point offering a field nobody can fill in any more.
+    """
+    return tuple(f for f in BIO if not (getattr(pet, f.key) or "").strip())
+
+
+def gaps_modal(save: Saver, pet: pet_registry.Pet, *, title: str = "Finish their bio"):
+    """Page two: the boxes registration had no room for, and nothing else.
+
+    Five components is Discord's cap on a form and the photo and the name take
+    two of it, so every registration route leaves something unasked. Asking only
+    for what is actually empty keeps that second screen short — two boxes from
+    the panel, one from the right-click claim, and no screen at all for a route
+    that managed to collect everything.
+    """
+    # Discord will not take a form with nothing on it, and the gaps can close
+    # between the button being handed out and somebody pressing it — a bio
+    # edited from 🐾 Manage my pets in the meantime fills them all. Falling
+    # back to the whole profile keeps that click doing something.
+    fields = blank_fields(pet) or BIO
+    return ProfileModal(
+        fields,
+        title=title,
+        save=save,
+        pet=pet,
+        # Only when the merged box is on screen: clearing the old `traits`
+        # underneath a box nobody was shown would delete what it holds.
+        also_clear=("traits",) if any(f.key == "known_for" for f in fields) else (),
+    )
+
+
 def name_modal(save: Saver, pet: pet_registry.Pet | None = None):
     """Just the name — its own form, since it has rules the bio fields don't."""
     return ProfileModal((), title="Rename", save=save, pet=pet, ask_name=True)
@@ -243,4 +276,4 @@ def missing(pet: pet_registry.Pet) -> list[str]:
 
     BIO only — there is no point naming a field nobody can fill in any more.
     """
-    return [LABELS[f.key] for f in BIO if not (getattr(pet, f.key) or "").strip()]
+    return [LABELS[f.key] for f in blank_fields(pet)]

@@ -1680,7 +1680,7 @@ class PanelAddPetModal(discord.ui.Modal):
     """
 
     def __init__(self, cog: "PetCare") -> None:
-        super().__init__(title="Add a pet")
+        super().__init__(title="Add a pet · 1 of 2")
         self.cog = cog
 
         self.photo = discord.ui.FileUpload(min_values=1, max_values=1, required=True)
@@ -1747,25 +1747,36 @@ class PanelAddPetModal(discord.ui.Modal):
 
         profile = {key: str(box.value or "").strip() for key, box in self.boxes}
         await self.cog._register(
-            interaction, str(self.pet_name).strip(), raw, profile
+            interaction, str(self.pet_name).strip(), raw, profile, paged=True
         )
 
 
 class MoreDetailsView(discord.ui.View):
-    """The rest of the bio, one click after registering.
+    """Page two of registering, offered the moment the pet exists.
 
-    A modal takes five components and no route has five to spare, so every way
-    in leaves a box or two unasked. This is where they get asked — it opens the
-    whole profile, pre-filled with whatever the form just collected, so it
-    finishes a registration rather than starting a second chore."""
+    A form takes five components and Discord will not take a sixth, so no route
+    has room for the whole bio — the panel's has the photo and the name in it
+    and gets three boxes for the rest. This is the other page, and it asks only
+    for what is still empty.
 
-    def __init__(self, pet: pet_registry.Pet) -> None:
+    **It has to be a button.** A modal cannot be opened in reply to a modal
+    being submitted, so the two pop-ups are separated by this message whether
+    anybody wants it there or not. What it can do is say so: `label` counts the
+    pages when the caller knows there are two.
+    """
+
+    def __init__(
+        self,
+        pet: pet_registry.Pet,
+        *,
+        label: str = "✨ Finish their bio",
+        title: str = "Finish their bio",
+    ) -> None:
         super().__init__(timeout=600)
         self.pet = pet
+        self.title = title
 
-        button = discord.ui.Button(
-            label="✨ Finish their bio", style=discord.ButtonStyle.primary
-        )
+        button = discord.ui.Button(label=label, style=discord.ButtonStyle.primary)
         button.callback = self._open
         self.add_item(button)
 
@@ -1774,16 +1785,20 @@ class MoreDetailsView(discord.ui.View):
             inter: discord.Interaction, values: dict[str, str], _name: str | None
         ) -> None:
             try:
-                await asyncio.to_thread(
+                pet = await asyncio.to_thread(
                     pet_registry.save_profile, self.pet.guild_id, self.pet.pet_id, values
                 )
             except pet_registry.PetError as e:
                 return await inter.response.send_message(f"❌ {e}", ephemeral=True)
+            left = pet_profile.missing(pet)
+            note = f" Still blank: {', '.join(left)}." if left else ""
             await inter.response.send_message(
-                f"✅ **{self.pet.name}**'s profile is saved.", ephemeral=True
+                f"✅ **{pet.name}**'s bio is saved.{note}", ephemeral=True
             )
 
-        await interaction.response.send_modal(pet_profile.bio_modal(save, self.pet))
+        await interaction.response.send_modal(
+            pet_profile.gaps_modal(save, self.pet, title=self.title)
+        )
 
 
 # ──────────────────────────────────────────────────────────────
@@ -2364,8 +2379,16 @@ class PetCare(commands.Cog):
         name: str,
         raw: bytes,
         profile: dict[str, str] | None = None,
+        *,
+        paged: bool = False,
     ) -> None:
-        """Shared tail of both registration routes. Assumes a deferred response."""
+        """Shared tail of every registration route. Assumes a deferred response.
+
+        `paged` is for the route that is explicitly a two-page form — the panel's
+        ➕ button — and only changes what the second page is called. The other two
+        offer the same button without numbering it, because nobody pressing
+        `/pet add` was told there were pages.
+        """
         assert interaction.guild is not None
         try:
             pet = await asyncio.to_thread(
@@ -2394,14 +2417,23 @@ class PetCare(commands.Cog):
         # Naming the empty boxes is the whole reason the button below is worth
         # pressing: five components is Discord's cap on a form, so something is
         # always left over, and "Still blank: …" is how somebody finds out which.
+        # What is still empty decides whether there is a second page at all. A
+        # route that collected everything gets no button, because a button that
+        # opens an empty form is a dead end with a label on it.
         left = pet_profile.missing(pet)
-        note = f"\nStill blank: {', '.join(left)} — the button below adds them." if left else ""
-        await interaction.followup.send(
+        text = (
             f"✅ **{pet.name}** is registered. Feed them from the panel in "
-            f"<#{PET_CARE_CHANNEL_ID}>.{note}",
-            view=MoreDetailsView(pet),
-            ephemeral=True,
+            f"<#{PET_CARE_CHANNEL_ID}>."
         )
+        extra: dict[str, Any] = {}
+        if left:
+            text += f"\nStill to add: {', '.join(left)}."
+            extra["view"] = MoreDetailsView(
+                pet,
+                label="✨ Next: 2 of 2" if paged else "✨ Finish their bio",
+                title="Add a pet · 2 of 2" if paged else "Finish their bio",
+            )
+        await interaction.followup.send(text, ephemeral=True, **extra)
         self._schedule_repost()   # the panel has a new pet to list
 
     pet = app_commands.Group(name="pet", description="Register and manage your pets 🐾")
