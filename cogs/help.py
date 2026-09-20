@@ -88,9 +88,11 @@ class Help(commands.Cog):
         embed.add_field(
             name="🐾 Pets",
             value=(
-                f"The panel in <#{PET_CARE_CHANNEL_ID}> is the main way in — feed, play, "
-                "the dex, the board, and your own pets, all from its buttons.\n"
-                "`/pet add` — register a pet with a photo\n"
+                f"The panel in <#{PET_CARE_CHANNEL_ID}> is the main way in — registering, "
+                "feeding, play, the dex, the board and your own pets, all from "
+                "its buttons. ➕ **Add a pet** takes the photo and the bio "
+                "in one go.\n"
+                "`/pet add` — the same thing as a command\n"
                 "`/pet list` — every pet in the server\n"
                 "`/pet remove` — remove one of yours\n"
                 f"Or right-click a photo you posted in <#{PET_PHOTO_CHANNEL_ID}> → "

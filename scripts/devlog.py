@@ -22,7 +22,10 @@ boring part:
     title: Mittens now does the thing
     tags: Developments, Done
     ---
-    Two or three short paragraphs, in plain words.
+    One sentence, in plain words, about what changed.
+
+Keep it to that. These are read in passing by people who use the server, not by
+whoever wrote the code, and a post that turns into a changelog stops being read.
 
 Tags are matched by name against the forum's own list, case-insensitively, so a
 tag renamed in Discord fails loudly here instead of posting untagged. `--list-tags`

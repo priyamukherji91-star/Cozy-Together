@@ -1,4 +1,4 @@
-discord.py>=2.4
+discord.py>=2.7   # Label + FileUpload components: the panel's Add a pet form
 aiohttp
 beautifulsoup4
 openai>=1.42

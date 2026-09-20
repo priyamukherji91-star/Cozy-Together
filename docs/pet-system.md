@@ -22,7 +22,7 @@ The panel shows, for the whole server:
 - **Still waiting** — up to six cards for the pets nobody has fed today, each
   with a coloured hunger bar: 🟩 fine, 🟧 peckish, 🟥 starving.
 
-Six buttons under it:
+Seven buttons under it:
 
 | Button | What it does |
 | --- | --- |
@@ -32,6 +32,7 @@ Six buttons under it:
 | 🏆 **Board** | The scoreboard. Posts publicly. |
 | 📖 **Pet dex** | Every pet, one per page, with a jump menu and an index. |
 | 🐾 **Manage my pets** | Your own pets only — edit, rename, remove. |
+| ➕ **Add a pet** | Registers one — photo and bio on a single form. |
 
 Everything except the board and the feed posts is **private to you**.
 
@@ -95,15 +96,28 @@ off someone.
 
 ## Registering a pet
 
-Two ways. Both ask for a name, and offer **species** and **year born** while
+Three ways. All of them ask for a name and offer a few bio fields while
 they're at it — leave those blank if you like, they're editable forever after.
 
-**1. `/pet add`** — in the pet channel.
+**1. ➕ Add a pet** — the button on the panel, and the one that needs nothing
+explained.
+
+- One form, five boxes: the **photo**, the **name**, **species**, **born** and
+  **what they're like**. The photo is uploaded in the form — there is no
+  posting it in the channel afterwards.
+- **Species** is the only one of the three bio boxes you have to fill in — it's
+  what draws their icon on the panel.
+- **Favourite treat** and **favourite toy** are the two that don't fit in five;
+  they're on the ✨ button straight after, and on 🐾 Manage my pets.
+
+**2. `/pet add`** — the same thing as a command, in the pet channel.
 
 - `name` — what they're called.
 - `photo` — attach a picture.
+- Then a form for the bio: **species**, **born**, **favourite treat**,
+  **favourite toy**.
 
-**2. Right-click a photo you already posted.**
+**3. Right-click a photo you already posted.**
 
 - Right-click (or long-press on mobile) your message → **Apps** → **Mittens the
   Menace** → **This is my pet**.

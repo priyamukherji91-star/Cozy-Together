@@ -9,11 +9,12 @@ You get a handful of treats a day and there are more pets than treats, so
 feeding is a choice about whose animal eats. Each pet remembers who has fed it
 most — its "favourite human" — and that title is the whole game.
 
-**Feeding has no slash command.** Everything happens through one panel, which
-the cog keeps as the last message in the pet channel so nobody has to scroll
-back to find it. `/pet add` stays a command because a Discord modal cannot carry
-a file upload, so registering a pet with a photo has no button-shaped
-equivalent.
+**Nothing here needs a slash command.** Everything happens through one panel,
+which the cog keeps as the last message in the pet channel so nobody has to
+scroll back to find it — registering included. A modal can carry a file upload
+now, so the panel's ➕ button asks for the photo and the bio on one screen.
+`/pet add` stays for anyone who already has the picture in hand, and the
+right-click claim for a photo already posted.
 
 There is no background task. The daily allowance resets by comparing a stored
 date whenever the ledger is read, which needs no scheduler and cannot be missed
@@ -1537,16 +1538,25 @@ class FoodBowlView(discord.ui.View):
     async def dex_btn(self, interaction: discord.Interaction, _b: discord.ui.Button) -> None:
         await self.cog.open_dex(interaction)
 
-    # Second row. Six buttons split three and three rather than five and one:
-    # five per row is Discord's limit, and filling one row leaves the sixth
-    # sitting on its own looking like an afterthought. The split is also the
-    # honest grouping — things you do above, things you look at below.
+    # Second row. Seven buttons split three and four rather than five and two:
+    # five per row is Discord's limit, and the split is close to the honest
+    # grouping — things you do to a pet above, everything else below.
     @discord.ui.button(
         label="🐾 Manage my pets", style=discord.ButtonStyle.secondary, row=1,
         custom_id="petcare:panel:manage",
     )
     async def manage_btn(self, interaction: discord.Interaction, _b: discord.ui.Button) -> None:
         await self.cog.open_manage(interaction)
+
+    # Registering used to mean knowing that `/pet add` existed, or that
+    # right-clicking your own photo offered it. Both still work; this is the one
+    # that needs nothing explained, on the panel people are already looking at.
+    @discord.ui.button(
+        label="➕ Add a pet", style=discord.ButtonStyle.success, row=1,
+        custom_id="petcare:panel:add",
+    )
+    async def add_btn(self, interaction: discord.Interaction, _b: discord.ui.Button) -> None:
+        await self.cog.open_add_pet(interaction)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -1649,6 +1659,95 @@ class AddPetModal(discord.ui.Modal):
             )
         profile = {key: str(box.value or "") for key, box in self.boxes}
         await self.cog._register(interaction, self.pet_name, raw, profile)
+
+
+class PanelAddPetModal(discord.ui.Modal):
+    """Registering a pet without leaving the panel.
+
+    Both older routes still work — `/pet add` in this channel, and right-clicking
+    your own photo → Apps → This is my pet — and both require knowing they
+    exist. This one is a button on the panel people are already looking at,
+    which is the only reason it was added.
+
+    **One pop-up, five components, which is Discord's cap.** A modal can carry a
+    file upload as well as text now, so the photo is asked for here rather than
+    as a second step. Favourite treat and favourite toy are the two that did not
+    fit; they are on the ✨ button `_register` hands back, and on
+    🐾 Manage my pets after that.
+
+    The write itself goes through `_register`, the same as every other route.
+    """
+
+    def __init__(self, cog: "PetCare") -> None:
+        super().__init__(title="Add a pet")
+        self.cog = cog
+
+        self.photo = discord.ui.FileUpload(min_values=1, max_values=1, required=True)
+        self.pet_name = discord.ui.TextInput(
+            max_length=pet_registry.MAX_NAME_LENGTH, required=True,
+        )
+        self.boxes: list[tuple[str, discord.ui.TextInput]] = []
+
+        self.add_item(discord.ui.Label(
+            text="A photo of them", description="Square-ish works best.",
+            component=self.photo,
+        ))
+        self.add_item(discord.ui.Label(text="Their name", component=self.pet_name))
+
+        # The same fields the profile asks for everywhere else, read off
+        # `pet_profile` rather than retyped — a label that disagreed with the
+        # edit screen would be two names for one thing. Each one sits under a
+        # `Label` because the upload above has no caption of its own and a form
+        # mixing the two shapes is not something Discord promises to render.
+        for field in (*pet_profile.BASICS, pet_profile.BIO[4]):
+            box = discord.ui.TextInput(
+                placeholder=field.placeholder or None,
+                max_length=field.cap,
+                required=field.key == "species",
+                style=(
+                    discord.TextStyle.paragraph if field.long
+                    else discord.TextStyle.short
+                ),
+            )
+            self.add_item(discord.ui.Label(text=field.label, component=box))
+            self.boxes.append((field.key, box))
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        if interaction.guild is None:
+            return await interaction.followup.send(
+                "⚠️ This only works in a server.", ephemeral=True
+            )
+
+        # `/pet add` screens the file before its modal opens, because there the
+        # modal is the command's one response and there is no taking it back.
+        # Here the form came first, so the screening lands after it.
+        shot = self.photo.values[0] if self.photo.values else None
+        if shot is None:
+            return await interaction.followup.send(
+                "❌ I need a photo of them.", ephemeral=True
+            )
+        if not (shot.content_type or "").startswith("image/"):
+            return await interaction.followup.send(
+                "❌ That needs to be an image.", ephemeral=True
+            )
+        if shot.size > pet_registry.MAX_UPLOAD_BYTES:
+            return await interaction.followup.send(
+                f"❌ {pet_registry.TOO_BIG}", ephemeral=True
+            )
+
+        try:
+            raw = await shot.read()
+        except Exception:
+            log.exception("[pets] could not read the uploaded photo")
+            return await interaction.followup.send(
+                "❌ I couldn't download that photo.", ephemeral=True
+            )
+
+        profile = {key: str(box.value or "").strip() for key, box in self.boxes}
+        await self.cog._register(
+            interaction, str(self.pet_name).strip(), raw, profile
+        )
 
 
 class MoreDetailsView(discord.ui.View):
@@ -1796,7 +1895,7 @@ class PetCare(commands.Cog):
                 "Everyone has their own treats. A pet someone else fed today "
                 "is still yours to feed."
                 if entries else
-                "Nobody has registered a pet yet. `/pet add` fixes that."
+                "Nobody has registered a pet yet. ➕ Add a pet fixes that."
             ),
         )
         # No author line. It read "Cozy Together · pet-care" directly above a
@@ -2240,6 +2339,20 @@ class PetCare(commands.Cog):
             or interaction.channel.id not in PET_CLAIM_CHANNEL_IDS
         )
 
+    async def open_add_pet(self, interaction: discord.Interaction) -> None:
+        """The panel's ➕ button.
+
+        The same channel rule as `/pet add`, checked rather than assumed: the
+        panel is wherever `/petpanel` last put it, which need not be a room
+        where registering is allowed.
+        """
+        if interaction.guild is None:
+            return await self._deny(interaction, "⚠️ This only works in a server.")
+        if self._cannot_register_here(interaction):
+            return await self._deny_register_channel(interaction)
+
+        await interaction.response.send_modal(PanelAddPetModal(self))
+
     async def _register(
         self,
         interaction: discord.Interaction,
@@ -2515,7 +2628,7 @@ class PetCare(commands.Cog):
         built = await self._feed_list(guild, interaction.user.id, set())
         if built is None:
             return await self._deny(
-                interaction, "🍖 Nobody has registered a pet yet. `/pet add` fixes that."
+                interaction, "🍖 Nobody has registered a pet yet. ➕ Add a pet fixes that."
             )
         text, view = built
         await interaction.response.send_message(text, view=view, ephemeral=True)
@@ -3008,7 +3121,7 @@ class PetCare(commands.Cog):
         if not pets:
             return await self._deny(
                 interaction,
-                "🐾 You haven't registered any pets. `/pet add` in this channel, "
+                "🐾 You haven't registered any pets. ➕ Add a pet on the panel, "
                 "or right-click a photo you posted → Apps → This is my pet.",
             )
 
@@ -3127,7 +3240,7 @@ class PetCare(commands.Cog):
         pets, rows, caught = await self._dex_entries(guild, interaction.user.id)
         if not pets:
             return await self._deny(
-                interaction, "📖 The dex is empty. `/pet add` starts it off."
+                interaction, "📖 The dex is empty. ➕ Add a pet starts it off."
             )
 
         pages = max(1, (len(rows) + DEX_INDEX_PAGE - 1) // DEX_INDEX_PAGE)
@@ -3169,7 +3282,7 @@ class PetCare(commands.Cog):
         pets, rows, caught = await self._dex_entries(guild, interaction.user.id)
         if not pets:
             return await self._deny(
-                interaction, "📖 The dex is empty. `/pet add` starts it off."
+                interaction, "📖 The dex is empty. ➕ Add a pet starts it off."
             )
 
         total = len(pets)
@@ -3254,7 +3367,7 @@ class PetCare(commands.Cog):
         pets = await asyncio.to_thread(pet_registry.all_pets, guild.id)
         if not pets:
             return await self._deny(
-                interaction, "🧸 Nobody has registered a pet yet. `/pet add` fixes that."
+                interaction, "🧸 Nobody has registered a pet yet. ➕ Add a pet fixes that."
             )
         entries = await asyncio.to_thread(self._play_order, guild.id, pets)
 
